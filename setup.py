@@ -23,11 +23,12 @@ class BuildPlugin(build_py):
 
   def run(self):
     subprocess.check_call(["make", f"PYTHON={sys.executable}"], cwd=HERE)
+    # After the declared files are copied, so this is not overwritten.
+    super().run()
     target = Path(self.build_lib) / "tensorflow-plugins"
     target.mkdir(parents=True, exist_ok=True)
     self.copy_file(str(HERE / "build" / "libmetal_plugin.dylib"),
                    str(target / "libmetal_plugin.dylib"))
-    super().run()
 
 
 setup(
@@ -39,8 +40,13 @@ setup(
     license="Apache-2.0",
     python_requires=">=3.10",
     install_requires=["tensorflow>=2.16"],
-    packages=[],
-    data_files=[("tensorflow-plugins", ["build/libmetal_plugin.dylib"])],
+    # tensorflow-plugins is the directory TensorFlow scans at import, so that
+    # is where the shared object has to land. Declaring it as a package is
+    # what makes the wheel carry it; data_files would not, since those install
+    # relative to sys.prefix rather than into site-packages, and setuptools
+    # resolves them before the build has produced anything.
+    packages=["tensorflow-plugins"],
+    package_data={"tensorflow-plugins": ["*.dylib"]},
     cmdclass={"build_py": BuildPlugin},
     classifiers=[
         "Development Status :: 3 - Alpha",

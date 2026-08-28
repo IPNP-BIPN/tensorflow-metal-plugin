@@ -49,11 +49,26 @@ def main() -> int:
   msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p]
   source = ctypes.c_void_p(msg(nsstring, sel, shader.encode()))
 
+  # The same compile options the backend uses, or this checks something else.
+  # MTLLanguageVersion3_0 is (3 << 16) | 0; the float overload of
+  # atomic_fetch_add_explicit only exists from Metal 3.0, and the default
+  # version follows the toolchain rather than the source.
+  options_class = ctypes.c_void_p(objc.objc_getClass(b"MTLCompileOptions"))
+  msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+  options = ctypes.c_void_p(
+      msg(ctypes.c_void_p(msg(options_class,
+                              ctypes.c_void_p(objc.sel_registerName(b"alloc")))),
+          ctypes.c_void_p(objc.sel_registerName(b"init"))))
+  set_version = ctypes.c_void_p(
+      objc.sel_registerName(b"setLanguageVersion:"))
+  msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong]
+  msg(options, set_version, (3 << 16) | 0)
+
   error = ctypes.c_void_p(0)
   sel = ctypes.c_void_p(objc.sel_registerName(b"newLibraryWithSource:options:error:"))
   msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
                   ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-  library = msg(ctypes.c_void_p(device), sel, source, None,
+  library = msg(ctypes.c_void_p(device), sel, source, options,
                 ctypes.byref(error))
   if not library:
     description = ctypes.c_void_p(0)

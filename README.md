@@ -53,6 +53,59 @@ Executing op MatMul in device /job:localhost/replica:0/task:0/device:GPU:0
 CPU kernels with soft placement disabled, so a missing GPU kernel raises
 instead of quietly producing a correct answer on the wrong device.
 
+## Install
+
+```
+pip install tensorflow
+pip install git+https://github.com/IPNP-BIPN/tensorflow-metal-plugin
+```
+
+That is all. The shared object is built at install time against the
+TensorFlow of the interpreter doing the installing, and lands in
+`site-packages/tensorflow-plugins`, which TensorFlow scans at import. Nothing
+has to be loaded by hand:
+
+```python
+>>> import tensorflow as tf
+>>> tf.config.list_physical_devices()
+[PhysicalDevice(name='/physical_device:CPU:0', device_type='CPU'),
+ PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]
+```
+
+Verified on a clean environment with `tensorflow==2.21.0`, Python 3.12, macOS
+26.6 on an M4 Max.
+
+## Is it faster than the CPU
+
+Sometimes, and by how much depends entirely on the shape of the work. Measured
+on an M4 Max against TensorFlow 2.21.0, median of ten runs each, both devices
+in the same process on the same data, waiting for the device before stopping
+the clock:
+
+| | GPU | CPU | |
+| --- | ---: | ---: | ---: |
+| MatMul 2048x2048 | 1.83 ms | 11.93 ms | **6.5x** |
+| Conv2D, batch 64, 64x64x32 to 64 | 3.04 ms | 9.02 ms | **3.0x** |
+| CNN training step, SGD, batch 128 | 10.53 ms | 18.30 ms | **1.7x** |
+| CNN forward, batch 128 | 3.50 ms | 5.27 ms | 1.5x |
+| MatMul 1024x1024 | 1.24 ms | 1.86 ms | 1.5x |
+| MatMul 512x512 | 0.39 ms | 0.34 ms | 0.9x |
+| ReduceSum 4096x4096 | 0.43 ms | 0.33 ms | 0.8x |
+| Elementwise 4096x4096 | 3.08 ms | 1.43 ms | 0.5x |
+
+The pattern is the ordinary one and worth stating plainly: the GPU wins where
+there is arithmetic to do per byte moved, and loses where there is not. A
+4096x4096 elementwise chain moves 67 MB and does three floating point
+operations per element, so it is bound by memory on a machine whose CPU shares
+that same memory. Small matrices lose to the cost of getting work to the
+device at all.
+
+What matters for the original question is the third row: a real training step
+is faster on the GPU, which is the case the CPU is supposed to win when a
+model is small.
+
+`benchmarks/benchmark.py` reproduces the table.
+
 ## Build
 
 Needs the macOS 15 SDK or later and a Python with TensorFlow installed. The
