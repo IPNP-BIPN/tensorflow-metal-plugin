@@ -345,17 +345,15 @@ REMOVED_FROM_GRAPHDEF = {
     "QuantizeAndDequantize", "AdjustContrast",
     "BatchNormWithGlobalNormalization", "BatchNormWithGlobalNormalizationGrad",
     "Conv3DBackpropFilter", "Conv3DBackpropInput",
+    # These two announce themselves differently, complaining that a kernel
+    # constrains an attribute the node lacks, which is true and is not the
+    # reason they cannot run: TopK is deprecated from GraphDef version 7 and
+    # TileGrad from version 3, and TensorFlow's own CPU registrations for them
+    # were left constraining index_type and Tmultiples, attributes their op
+    # defs do not have. Deprecated is the reason; the constraint is what the
+    # error happens to mention first.
+    "TopK", "TileGrad",
 }
-
-# Ops TensorFlow cannot run on any device, because its own kernel
-# registrations constrain an attribute the op does not have. Reproduced on a
-# stock 2.18 and 2.20 with no plugin loaded at all:
-#
-#   OpKernel 'TopK' has constraint on attr 'index_type' not in NodeDef
-#   OpKernel 'TileGrad' has constraint on attr 'Tmultiples' not in NodeDef
-#
-# This backend registers both correctly; there is simply no way to reach them.
-BROKEN_IN_TENSORFLOW = {"TopK", "TileGrad"}
 
 # Ops that need entry points a released TensorFlow does not export, so the
 # plugin deliberately leaves them to the host. In an in-tree build they are

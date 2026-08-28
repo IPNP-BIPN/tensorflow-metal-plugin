@@ -23,8 +23,7 @@ off so that a missing kernel raises rather than answering from the host:
 | | |
 | --- | --- |
 | Verified against the CPU kernel, or against a property where there is no CPU kernel | 323 |
-| Removed from TensorFlow, so no device can run them | 17 |
-| Broken in TensorFlow itself, on every device | 2 |
+| Removed from TensorFlow, so no device can run them | 19 |
 | Need kernel C API entry points a released TensorFlow does not export | 14 |
 | **Unaccounted for** | **0** |
 
@@ -34,9 +33,12 @@ separately enumerates every registration TensorFlow holds for these ops and
 rejects any that is duplicated or that constrains an attribute the op does not
 have, since either makes an op unusable while looking registered.
 
-The two broken in TensorFlow are `TopK` and `TileGrad`, whose own CPU
-registrations constrain `index_type` and `Tmultiples`, attributes those ops do
-not have. Reproduced on a stock 2.18 and 2.20 with no plugin loaded.
+Two of the nineteen announce themselves differently, complaining that a
+kernel constrains an attribute the node lacks: TensorFlow's own CPU
+registrations for `TopK` and `TileGrad` constrain `index_type` and
+`Tmultiples`, which their op defs do not have. That is true and is not why
+they cannot run. Both are deprecated in their op def, `TopK` from GraphDef
+version 7 and `TileGrad` from version 3, so nothing can call them either way.
 
 Verified on an Apple M4 Max, macOS 26.6, against the stock
 `tensorflow==2.20.0` wheel for Python 3.12:
