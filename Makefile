@@ -31,7 +31,12 @@ ifeq ($(STREAM_OPTIONS),no)
 COMPAT := -DTF_METAL_NO_STREAM_OPTIONS
 endif
 
-CXXFLAGS := -std=c++17 -O2 -fPIC -isysroot $(SDK) $(COMPAT) \
+# -MMD -MP writes a .d file per object listing the headers it included, so a
+# change to a header rebuilds everything that reads it. Without this, adding a
+# field to a struct recompiled only the file it was declared in and left the
+# rest reading the old layout, which shows up as a stream reporting a failure
+# that never happened.
+CXXFLAGS := -std=c++17 -O2 -fPIC -isysroot $(SDK) $(COMPAT) -MMD -MP \
             -mmacosx-version-min=13.0 \
             -Isrc -I$(TF_INCLUDE) \
             -I$(TF_INCLUDE)/external/farmhash_archive/src \
@@ -85,3 +90,5 @@ install: $(OUT)
 
 clean:
 	rm -rf $(BUILD)
+
+-include $(OBJECTS:.o=.d)
