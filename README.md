@@ -30,7 +30,10 @@ instead of quietly producing a correct answer on the wrong device.
 
 ## Build
 
-Needs the command line tools and a Python with TensorFlow installed. The
+Needs the macOS 15 SDK or later and a Python with TensorFlow installed. The
+backend aliases an `MTLBuffer` through `MPSNDArray` with packed rows, and both
+`initWithBuffer:offset:descriptor:` and `preferPackedRows` arrived in that SDK;
+an older one does not declare them and the build stops rather than degrading. The
 header and library paths come from that TensorFlow, so the plugin is built
 against exactly the one it will be loaded into.
 

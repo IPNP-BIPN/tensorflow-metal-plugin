@@ -11,7 +11,12 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: macos-14   # Apple silicon
+    # macos-15 rather than macos-14: the backend aliases an MTLBuffer through
+    # MPSNDArray with packed rows, and both initWithBuffer:offset:descriptor:
+    # and preferPackedRows arrived in the macOS 15 SDK. The 14.5 SDK on the
+    # macos-14 image does not declare them, so the build fails to compile
+    # rather than falling back at runtime.
+    runs-on: macos-15   # Apple silicon
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +35,8 @@ jobs:
 
       - name: Report what we are building against
         run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
           python -c "import tensorflow as tf; print(tf.__version__); print(tf.sysconfig.get_include()); print(tf.sysconfig.get_lib())"
           sw_vers
           system_profiler SPDisplaysDataType | head -20
