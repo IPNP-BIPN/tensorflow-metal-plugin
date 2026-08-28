@@ -24,6 +24,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework import kernels
 from tensorflow.python.framework import load_library
+from tensorflow.python.eager import context
+from tensorflow.python.eager import execute as eager_execute
 from tensorflow.python.framework import op_def_registry
 
 import recipes
@@ -222,6 +224,8 @@ def by_name():
 NAMED = {}
 RANDOM = {}
 NO_CPU = {}
+INTERNAL = {}
+PRELUDE = {"_NcclBroadcastRecv": "_NcclBroadcastSend"}
 
 
 def synthesize(op_def):
@@ -421,6 +425,45 @@ def invalid_constraints(ops):
   return found
 
 
+def check_internal_without_cpu(name, inputs, outputs):
+  """Properties for the internal ops TensorFlow has no CPU kernel for."""
+  if not outputs:
+    return True, "runs and produces nothing, which is its whole job"
+  if name == "_FusedBatchNormEx":
+    # The fused form with no side input and no activation is the plain one,
+    # and that is already checked against the CPU.
+    image, scale, offset, mean, variance = inputs[:5]
+    with tf.device("/GPU:0"):
+      plain = tf.raw_ops.FusedBatchNormV3(
+          x=image, scale=scale, offset=offset, mean=mean, variance=variance,
+          epsilon=1e-3, is_training=False)[0].numpy()
+    worst = float(np.max(np.abs(outputs[0] - plain)))
+    return worst < 1e-4, f"agrees with FusedBatchNormV3 to {worst:.2e}"
+  if name == "_NcclBroadcastRecv":
+    # Its input is a shape; what it produces should be what the matching send
+    # parked, which is the tensor the send recipe was given.
+    wanted = tuple(int(v) for v in np.asarray(inputs[0]))
+    if outputs[0].shape != wanted:
+      return False, f"produces {outputs[0].shape}, wanted {wanted}"
+    sent = np.asarray(INTERNAL["_NcclBroadcastSend"][0][0])
+    worst = float(np.max(np.abs(outputs[0] - sent)))
+    return worst == 0.0, f"receives exactly what was sent ({worst:.1e})"
+  source = np.asarray(inputs[0])
+  same = (outputs[0].shape == source.shape
+          and float(np.max(np.abs(outputs[0] - source))) == 0.0)
+  return same, ("copies its input exactly" if same
+                else "does not reproduce its input")
+
+
+def run_internal(op_name, inputs, attrs, num_outputs, device):
+  """Calls an op that has no generated Python wrapper."""
+  with tf.device(device):
+    placed = [tf.identity(t) for t in inputs]
+    return eager_execute.execute(op_name.encode(), num_outputs,
+                                 inputs=placed, attrs=attrs,
+                                 ctx=context.context())
+
+
 def run(op_name, kwargs, device):
   with tf.device(device):
     return getattr(tf.raw_ops, op_name)(**kwargs)
@@ -493,6 +536,8 @@ def main():
   RANDOM = recipes.nondeterministic()
   NO_CPU = recipes.no_cpu_reference()
   NO_CPU.update(recipes.cudnn_rnn_checks())
+  global INTERNAL
+  INTERNAL = recipes.internal()
 
   ops = load_ops(args.ops)
   if args.only:
@@ -514,6 +559,38 @@ def main():
   results = {}
   details = {}
   for name in ops:
+    if name in INTERNAL:
+      inputs, attrs, num_outputs = INTERNAL[name]
+      # A receive has nothing to collect until its send has run. The pair is
+      # the point of the split form, so the sweep runs both.
+      prelude = PRELUDE.get(name)
+      if prelude and prelude in INTERNAL:
+        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
+        for device in ("/GPU:0", "/CPU:0"):
+          try:
+            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
+          except Exception:  # pylint: disable=broad-except
+            pass
+      try:
+        gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
+                                        "/GPU:0"))
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      try:
+        cpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
+                                        "/CPU:0"))
+      except Exception:  # pylint: disable=broad-except
+        ok, detail = check_internal_without_cpu(name, inputs, gpu)
+        results[name] = MATCH if ok else MISMATCH
+        details[name] = detail
+        continue
+      ok, detail = compare(cpu, gpu, name)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = detail
+      continue
+
     if name in NO_CPU:
       kwargs, what = NO_CPU[name]
       try:
@@ -539,6 +616,38 @@ def main():
       details[name] = ("needs kernel C API entry points a released "
                        "TensorFlow does not export")
       continue
+    if name in INTERNAL:
+      inputs, attrs, num_outputs = INTERNAL[name]
+      # A receive has nothing to collect until its send has run. The pair is
+      # the point of the split form, so the sweep runs both.
+      prelude = PRELUDE.get(name)
+      if prelude and prelude in INTERNAL:
+        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
+        for device in ("/GPU:0", "/CPU:0"):
+          try:
+            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
+          except Exception:  # pylint: disable=broad-except
+            pass
+      try:
+        gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
+                                        "/GPU:0"))
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      try:
+        cpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
+                                        "/CPU:0"))
+      except Exception:  # pylint: disable=broad-except
+        ok, detail = check_internal_without_cpu(name, inputs, gpu)
+        results[name] = MATCH if ok else MISMATCH
+        details[name] = detail
+        continue
+      ok, detail = compare(cpu, gpu, name)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = detail
+      continue
+
     if name in NO_CPU:
       kwargs, what = NO_CPU[name]
       try:

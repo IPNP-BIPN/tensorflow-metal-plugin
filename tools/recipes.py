@@ -792,3 +792,55 @@ def cudnn_rnn_checks():
            "is_training": False},
           "runs, finite and repeatable"),
   }
+
+
+def internal():
+  """Ops with no Python wrapper, called straight through the eager executor.
+
+  TensorFlow generates wrappers only for public ops, so the fused forms the
+  grappler emits and the collectives' halves are absent from tf.raw_ops.
+  Skipping them would leave a tenth of what the grappler actually produces
+  unexercised, so each is given its inputs and its attributes by hand.
+  """
+  with tf.device("/CPU:0"):
+    f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+    u = lambda *s: tf.constant(RNG.random(s).astype(np.float32) * 0.9 + 0.05)
+    a, b, bias = u(6, 5), u(5, 4), f(4)
+    image, filt, cbias = f(2, 7, 9, 3), f(3, 3, 3, 4), f(4)
+    scale, offset, mean, variance = f(3), f(3), u(3), u(3)
+    small = u(6, 5)
+    integers = tf.constant([1, 2, 3, 4], dtype=tf.int32)
+  ft = tf.float32.as_datatype_enum
+  return {
+      "_FusedMatMul": (
+          [a, b, bias],
+          ("T", ft, "transpose_a", False, "transpose_b", False,
+           "num_args", 1, "fused_ops", ["BiasAdd"], "epsilon", 1e-4,
+           "leakyrelu_alpha", 0.2), 1),
+      "_FusedConv2D": (
+          [image, filt, cbias],
+          ("T", ft, "TArgs", [ft], "num_args", 1, "num_host_args", 0,
+           "strides", [1, 1, 1, 1], "padding", b"SAME",
+           "explicit_paddings", [], "data_format", b"NHWC",
+           "dilations", [1, 1, 1, 1], "use_cudnn_on_gpu", True,
+           "fused_ops", ["BiasAdd"], "epsilon", 1e-4,
+           "leakyrelu_alpha", 0.2), 1),
+      "_FusedBatchNormEx": (
+          [image, scale, offset, mean, variance],
+          ("T", ft, "U", ft, "epsilon", 1e-3, "exponential_avg_factor", 1.0,
+           "num_side_inputs", 0, "activation_mode", b"Identity",
+           "data_format", b"NHWC", "is_training", False), 6),
+      "_NcclBroadcastSend": (
+          [small], ("T", ft, "num_devices", 1, "shared_name", b"sweep"), 0),
+      "_NcclBroadcastRecv": (
+          [tf.constant([6, 5], dtype=tf.int32)],
+          ("T", ft, "num_devices", 1, "shared_name", b"sweep"), 1),
+      "_NcclReduceSend": (
+          [small], ("T", ft, "reduction", b"sum", "num_devices", 1,
+                    "shared_name", b"sweep"), 0),
+      "_NcclReduceRecv": (
+          [small], ("T", ft, "reduction", b"sum", "num_devices", 1,
+                    "shared_name", b"sweep"), 1),
+      "_TensorToHashBucketFast": (
+          [integers], ("T", tf.int32.as_datatype_enum, "num_buckets", 7), 1),
+  }
