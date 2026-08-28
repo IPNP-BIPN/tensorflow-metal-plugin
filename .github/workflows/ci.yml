@@ -1,8 +1,14 @@
-name: CI
+name: Metal plugin
 
-# The whole point of building this out of tree: an Apple silicon runner that
-# compiles the Metal shaders and executes the kernels on a real GPU, which
-# TensorFlow's own CI has no machine for.
+# Kept alongside the plugin rather than in .github/workflows, because
+# TensorFlow's CI has no Apple silicon GPU runner to run it on. Copy it there,
+# or run the same three steps by hand, on a machine that has one:
+#
+#   make -j4 && make check-symbols && make test
+#
+# That is the thing an out-of-tree plugin can offer that TensorFlow's own CI
+# cannot: the Metal shaders compiled by the Metal runtime, and the kernels
+# executed on a real GPU.
 on:
   push:
     branches: [main]
@@ -23,6 +29,7 @@ jobs:
         python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+
 
       - uses: actions/setup-python@v5
         with:
