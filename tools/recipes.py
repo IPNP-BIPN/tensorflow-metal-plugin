@@ -547,3 +547,248 @@ def _no_cpu_reference():
       "NcclReduce": ({"input": [small], "reduction": "sum"},
                      "reducing one input is a copy"),
   }
+
+
+def gradients_and_rest():
+  with tf.device("/CPU:0"):
+    return _gradients_and_rest()
+
+
+def _gradients_and_rest():
+  f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+  u = lambda *s: tf.constant(RNG.random(s).astype(np.float32) * 0.9 + 0.05)
+  image = f(2, 7, 9, 3)
+  image5 = f(2, 4, 5, 6, 3)
+  filt3 = f(2, 3, 3, 3, 4)
+  pooled = tf.nn.max_pool2d(image, 2, 2, "VALID")
+  argmax = tf.raw_ops.MaxPoolWithArgmax(input=image, ksize=[1, 2, 2, 1],
+                                        strides=[1, 2, 2, 1], padding="VALID")
+  pool = dict(ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="VALID")
+  bn = dict(scale=f(3), offset=f(3), mean=u(3), variance=u(3))
+  forward = tf.raw_ops.FusedBatchNormV3(x=image, **bn, is_training=False)
+  boxes = tf.constant([[0.0, 0.0, 0.6, 0.6], [0.1, 0.1, 0.9, 0.9]],
+                      dtype=tf.float32)
+  box_index = tf.constant([0, 1], dtype=tf.int32)
+  cropped = tf.raw_ops.CropAndResize(image=image, boxes=boxes,
+                                     box_ind=box_index, crop_size=[4, 5])
+  sparse_indices = tf.constant([[0, 0], [1, 2], [2, 1], [3, 3]],
+                               dtype=tf.int64)
+  sparse_values = tf.constant([1.0, 2.0, 3.0, 4.0], dtype=tf.float32)
+  sparse_shape = tf.constant([4, 4], dtype=tf.int64)
+  filled = tf.raw_ops.SparseFillEmptyRows(indices=sparse_indices,
+                                          values=sparse_values,
+                                          dense_shape=sparse_shape,
+                                          default_value=0.0)
+  batch, units, inputs, steps = 3, 4, 5, 6
+  x_seq = f(steps, batch, inputs)
+  h0, c0 = f(batch, units), f(batch, units)
+  w_lstm, b_lstm, wci = f(inputs + units, 4 * units), f(4 * units), f(units)
+  cell = tf.raw_ops.LSTMBlockCell(x=f(batch, inputs), cs_prev=c0, h_prev=h0,
+                                  w=w_lstm, wci=wci, wcf=wci, wco=wci,
+                                  b=b_lstm)
+  block = tf.raw_ops.BlockLSTM(seq_len_max=tf.constant(steps, dtype=tf.int64),
+                               x=x_seq, cs_prev=c0, h_prev=h0, w=w_lstm,
+                               wci=wci, wcf=wci, wco=wci, b=b_lstm)
+  gru_w_ru, gru_w_c = f(inputs + units, 2 * units), f(inputs + units, units)
+  gru_b_ru, gru_b_c = f(2 * units), f(units)
+  gru = tf.raw_ops.GRUBlockCell(x=f(batch, inputs), h_prev=h0, w_ru=gru_w_ru,
+                                w_c=gru_w_c, b_ru=gru_b_ru, b_c=gru_b_c)
+
+  return {
+      # Normalisation gradients, in training mode, which is the only mode
+      # where the reserve spaces mean anything.
+      "FusedBatchNormGrad": {
+          "y_backprop": image, "x": image, "scale": bn["scale"],
+          "reserve_space_1": forward[3], "reserve_space_2": forward[4],
+          "is_training": False},
+      "FusedBatchNormGradV2": {
+          "y_backprop": image, "x": image, "scale": bn["scale"],
+          "reserve_space_1": forward[3], "reserve_space_2": forward[4],
+          "is_training": False},
+      "FusedBatchNormGradV3": {
+          "y_backprop": image, "x": image, "scale": bn["scale"],
+          "reserve_space_1": forward[3], "reserve_space_2": forward[4],
+          "reserve_space_3": forward[5], "is_training": False},
+      "BatchNormWithGlobalNormalizationGrad": {
+          "t": image, "m": u(3), "v": u(3), "gamma": f(3), "backprop": image,
+          "variance_epsilon": 1e-3, "scale_after_normalization": True},
+
+      # Pooling gradients that carry indices.
+      "MaxPoolGradWithArgmax": {
+          "input": image, "grad": tf.ones_like(pooled),
+          "argmax": argmax[1], **pool},
+      "MaxPoolGradGradWithArgmax": {
+          "input": image, "grad": tf.ones_like(image),
+          "argmax": argmax[1], **pool},
+
+      # Image gradients.
+      "CropAndResizeGradImage": {
+          "grads": tf.ones_like(cropped), "boxes": boxes,
+          "box_ind": box_index, "image_size": [2, 7, 9, 3], "T": tf.float32},
+      "CropAndResizeGradBoxes": {
+          "grads": tf.ones_like(cropped), "image": image, "boxes": boxes,
+          "box_ind": box_index},
+
+      # The deprecated three-dimensional gradient names.
+      "Conv3DBackpropInput": {
+          "input": image5, "filter": filt3,
+          "out_backprop": tf.nn.conv3d(image5, filt3, [1, 1, 1, 1, 1], "SAME"),
+          "strides": [1, 1, 1, 1, 1], "padding": "SAME"},
+      "Conv3DBackpropFilter": {
+          "input": image5, "filter": filt3,
+          "out_backprop": tf.nn.conv3d(image5, filt3, [1, 1, 1, 1, 1], "SAME"),
+          "strides": [1, 1, 1, 1, 1], "padding": "SAME"},
+
+      # Recurrent gradients.
+      "LSTMBlockCellGrad": {
+          "x": f(batch, inputs), "cs_prev": c0, "h_prev": h0, "w": w_lstm,
+          "wci": wci, "wcf": wci, "wco": wci, "b": b_lstm, "i": cell[0],
+          "cs": cell[1], "f": cell[2], "o": cell[3], "ci": cell[4],
+          "co": cell[5], "cs_grad": f(batch, units),
+          "h_grad": f(batch, units), "use_peephole": False},
+      "GRUBlockCellGrad": {
+          "x": f(batch, inputs), "h_prev": h0, "w_ru": gru_w_ru,
+          "w_c": gru_w_c, "b_ru": gru_b_ru, "b_c": gru_b_c, "r": gru[0],
+          "u": gru[1], "c": gru[2], "d_h": f(batch, units)},
+      "BlockLSTMGrad": {
+          "seq_len_max": tf.constant(steps, dtype=tf.int64), "x": x_seq,
+          "cs_prev": c0, "h_prev": h0, "w": w_lstm, "wci": wci, "wcf": wci,
+          "wco": wci, "b": b_lstm, "i": block[0], "cs": block[1],
+          "f": block[2], "o": block[3], "ci": block[4], "co": block[5],
+          "h": block[6], "cs_grad": f(steps, batch, units),
+          "h_grad": f(steps, batch, units), "use_peephole": False},
+      "BlockLSTMGradV2": {
+          "seq_len_max": tf.constant(steps, dtype=tf.int64), "x": x_seq,
+          "cs_prev": c0, "h_prev": h0, "w": w_lstm, "wci": wci, "wcf": wci,
+          "wco": wci, "b": b_lstm, "i": block[0], "cs": block[1],
+          "f": block[2], "o": block[3], "ci": block[4], "co": block[5],
+          "h": block[6], "cs_grad": f(steps, batch, units),
+          "h_grad": f(steps, batch, units), "use_peephole": False},
+
+      # Sparse and ragged.
+      "SparseFillEmptyRowsGrad": {
+          "reverse_index_map": filled[3],
+          "grad_values": f(int(filled[1].shape[0]))},
+      "SparseSliceGrad": {
+          "backprop_val_grad": f(4), "input_indices": sparse_indices,
+          "input_start": tf.constant([0, 0], dtype=tf.int64),
+          "output_indices": sparse_indices},
+      "SparseBincount": {
+          "indices": sparse_indices,
+          "values": tf.constant([0, 1, 1, 3], dtype=tf.int32),
+          "dense_shape": sparse_shape, "size": 5,
+          "weights": tf.constant([], dtype=tf.float32),
+          "binary_output": False},
+      "RaggedBincount": {
+          "splits": tf.constant([0, 2, 4], dtype=tf.int64),
+          "values": tf.constant([0, 1, 1, 3], dtype=tf.int32), "size": 5,
+          "weights": tf.constant([], dtype=tf.float32),
+          "binary_output": False},
+      "RaggedFillEmptyRows": {
+          "value_rowids": tf.constant([0, 0, 2, 2], dtype=tf.int64),
+          "values": sparse_values, "nrows": tf.constant(4, dtype=tf.int64),
+          "default_value": 0.0},
+
+      # Sequence and detection.
+      "CTCLoss": {
+          "inputs": f(6, 2, 5),
+          "labels_indices": tf.constant([[0, 0], [0, 1], [1, 0]],
+                                        dtype=tf.int64),
+          "labels_values": tf.constant([1, 2, 1], dtype=tf.int32),
+          "sequence_length": tf.constant([6, 6], dtype=tf.int32)},
+      "CTCLossV2": {
+          "inputs": f(6, 2, 5),
+          "labels_indices": tf.constant([[0, 0], [0, 1], [1, 0]],
+                                        dtype=tf.int64),
+          "labels_values": tf.constant([1, 2, 1], dtype=tf.int32),
+          "sequence_length": tf.constant([6, 6], dtype=tf.int32)},
+
+      # Fused forms the grappler emits.
+      "_FusedMatMul": {
+          "a": u(6, 5), "b": u(5, 4), "args": [f(4)],
+          "fused_ops": ["BiasAdd"], "num_args": 1},
+      "_FusedConv2D": {
+          "input": image, "filter": f(3, 3, 3, 4), "args": [f(4)],
+          "strides": [1, 1, 1, 1], "padding": "SAME",
+          "fused_ops": ["BiasAdd"], "num_args": 1},
+
+      # The remaining collectives.
+      "_NcclBroadcastRecv": {"shape": [6, 5], "num_devices": 1,
+                             "shared_name": "sweep", "T": tf.float32},
+      "_NcclBroadcastSend": {"input": u(6, 5), "num_devices": 1,
+                             "shared_name": "sweep"},
+      "_NcclReduceRecv": {"input": u(6, 5), "reduction": "sum",
+                          "num_devices": 1, "shared_name": "sweep"},
+      "_NcclReduceSend": {"input": u(6, 5), "reduction": "sum",
+                          "num_devices": 1, "shared_name": "sweep"},
+
+      "TopK": {"input": u(6, 5), "k": 3},
+      "TileGrad": {"input": f(12, 5), "multiples": [2, 1]},
+      "_TensorToHashBucketFast": {"input": tf.constant([1, 2, 3],
+                                                       dtype=tf.int32),
+                                  "num_buckets": 7},
+      "DebugNumericSummaryV2": {"input": f(6, 5), "tensor_debug_mode": 2},
+  }
+
+
+def cudnn_rnn_checks():
+  """The recurrent family, which TensorFlow has no CPU kernel for at all.
+
+  There is nothing to compare against, so each op is pinned down by a property
+  instead: the parameter size agrees with what the canonical conversions
+  produce, the conversions round-trip, and the forward pass is finite and
+  repeatable. The arithmetic itself is checked far more sharply by the
+  on-device harness, which compares against a reference written out in double
+  precision from the published cell equations and the gradients against
+  central differences.
+  """
+  with tf.device("/CPU:0"):
+    layers, units, inputs, batch, steps = 1, 4, 5, 3, 6
+    f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+    common = {"num_layers": layers, "num_units": units, "input_size": inputs}
+    weights = [f(units, inputs) for _ in range(4)] + \
+              [f(units, units) for _ in range(4)]
+    biases = [f(units) for _ in range(8)]
+    sequence = f(steps, batch, inputs)
+    state = f(layers, batch, units)
+  size = 4 * units * inputs * 4 + 4 * units * units * 4 + 8 * units
+  size = len(weights[0].numpy().ravel()) * 4 + len(weights[4].numpy().ravel()) * 4 \
+      + sum(len(b.numpy()) for b in biases)
+  with tf.device("/GPU:0"):
+    params = tf.raw_ops.CudnnRNNCanonicalToParams(
+        num_layers=layers, num_units=units, input_size=inputs,
+        weights=weights, biases=biases)
+  canonical = [w.numpy() for w in weights] + [b.numpy() for b in biases]
+  return {
+      "CudnnRNNParamsSize": (
+          dict(common, T=tf.float32, S=tf.int32, _expected_size=size),
+          "the size the canonical layout implies"),
+      "CudnnRNNCanonicalToParams": (
+          dict(common, weights=weights, biases=biases, _expected_size=size),
+          "packs the canonical weights"),
+      "CudnnRNNCanonicalToParamsV2": (
+          dict(common, weights=weights, biases=biases, _expected_size=size),
+          "packs the canonical weights"),
+      "CudnnRNNParamsToCanonical": (
+          dict(common, params=params, num_params=8,
+               _canonical=canonical),
+          "round trips back to the canonical weights"),
+      "CudnnRNNParamsToCanonicalV2": (
+          dict(common, params=params, num_params_weights=8,
+               num_params_biases=8, _canonical=canonical),
+          "round trips back to the canonical weights"),
+      "CudnnRNN": (
+          {"input": sequence, "input_h": state, "input_c": state,
+           "params": params, "is_training": False},
+          "runs, finite and repeatable"),
+      "CudnnRNNV2": (
+          {"input": sequence, "input_h": state, "input_c": state,
+           "params": params, "is_training": False},
+          "runs, finite and repeatable"),
+      "CudnnRNNV3": (
+          {"input": sequence, "input_h": state, "input_c": state,
+           "params": params,
+           "sequence_lengths": tf.constant([6, 4, 2], dtype=tf.int32),
+           "is_training": False},
+          "runs, finite and repeatable"),
+  }

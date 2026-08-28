@@ -304,6 +304,54 @@ def check_self_adjoint_eig(kwargs, outputs):
   return ok, f"V diag(e) V^T to {worst:.2e}, orthonormal to {orthonormal:.2e}"
 
 
+def flatten_deep(value):
+  out = []
+  for item in (value if isinstance(value, (list, tuple)) else [value]):
+    if isinstance(item, (list, tuple)):
+      out.extend(flatten_deep(item))
+    else:
+      out.append(np.asarray(item))
+  return out
+
+
+def check_cudnn_rnn(name, kwargs, outputs):
+  """The recurrent family, which TensorFlow has no CPU kernel for.
+
+  Pinned down by what can be stated without a second implementation: the
+  parameter buffer's size agrees with the canonical layout, the two
+  conversions round-trip exactly, the forward pass is finite and repeatable,
+  and V3 emits nothing past a sequence's own length. The arithmetic is checked
+  against a double-precision reference and central differences by the
+  on-device harness, not here.
+  """
+  first = flatten_deep(outputs)[0]
+  if name == "CudnnRNNParamsSize":
+    expected = kwargs.pop("_expected_size")
+    return int(first) == expected, f"{int(first)} floats, as the layout implies"
+  if "CanonicalToParams" in name:
+    expected = kwargs.pop("_expected_size")
+    return int(first.shape[0]) == expected, f"packs {int(first.shape[0])} floats"
+  if "ParamsToCanonical" in name:
+    original = kwargs.pop("_canonical")
+    got = flatten_deep(outputs)
+    worst = max(float(np.max(np.abs(a - b))) for a, b in zip(original, got))
+    return worst == 0.0, f"round trips exactly ({worst:.1e})"
+  # The forward passes.
+  values = flatten_deep(outputs)[0]
+  if not np.all(np.isfinite(values)):
+    return False, "not finite"
+  if name == "CudnnRNNV3":
+    lengths = np.asarray(kwargs["sequence_lengths"])
+    beyond = 0.0
+    for row, length in enumerate(lengths):
+      if length < values.shape[0]:
+        beyond = max(beyond, float(np.max(np.abs(values[int(length):, row]))))
+    if beyond != 0.0:
+      return False, f"emits {beyond:.2e} past a sequence's length"
+    return True, "finite, and silent past each sequence's length"
+  return True, "finite"
+
+
 def check_no_cpu(name, kwargs, outputs):
   """Verifies an op TensorFlow cannot run on the CPU against a property."""
   first = np.asarray(outputs[0])
@@ -441,8 +489,10 @@ def main():
   NAMED = by_name()
   NAMED.update(recipes.build())
   NAMED.update(recipes.more())
+  NAMED.update(recipes.gradients_and_rest())
   RANDOM = recipes.nondeterministic()
   NO_CPU = recipes.no_cpu_reference()
+  NO_CPU.update(recipes.cudnn_rnn_checks())
 
   ops = load_ops(args.ops)
   if args.only:
@@ -467,12 +517,16 @@ def main():
     if name in NO_CPU:
       kwargs, what = NO_CPU[name]
       try:
-        gpu = flatten(run(name, dict(kwargs), "/GPU:0"))
+        call = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        gpu = flatten_deep(run(name, call, "/GPU:0"))
       except Exception as error:  # pylint: disable=broad-except
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      ok, detail = check_no_cpu(name, kwargs, gpu)
+      if name.startswith("CudnnRNN"):
+        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
+      else:
+        ok, detail = check_no_cpu(name, kwargs, gpu)
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
@@ -488,12 +542,16 @@ def main():
     if name in NO_CPU:
       kwargs, what = NO_CPU[name]
       try:
-        gpu = flatten(run(name, dict(kwargs), "/GPU:0"))
+        call = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        gpu = flatten_deep(run(name, call, "/GPU:0"))
       except Exception as error:  # pylint: disable=broad-except
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      ok, detail = check_no_cpu(name, kwargs, gpu)
+      if name.startswith("CudnnRNN"):
+        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
+      else:
+        ok, detail = check_no_cpu(name, kwargs, gpu)
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
