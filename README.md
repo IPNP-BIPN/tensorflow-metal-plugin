@@ -12,8 +12,31 @@ form hands the same function pointers to `RegisterPluggableDevicePlugin`.
 
 ## Status
 
-Working, with one significant limitation that is not this project's to fix.
-See [What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do).
+Working, and every op it registers has been run on a real GPU and checked.
+One significant limitation is not this project's to fix: see
+[What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do).
+
+`make sweep` calls all 356 registered ops through TensorFlow's own dispatch,
+once on the GPU and once on the CPU with identical inputs, with soft placement
+off so that a missing kernel raises rather than answering from the host:
+
+| | |
+| --- | --- |
+| Verified against the CPU kernel, or against a property where there is no CPU kernel | 323 |
+| Removed from TensorFlow, so no device can run them | 17 |
+| Broken in TensorFlow itself, on every device | 2 |
+| Need kernel C API entry points a released TensorFlow does not export | 14 |
+| **Unaccounted for** | **0** |
+
+Every op is also run twice and required to give the same answer, which is how
+an inverse transform that rewrote its own input was caught. The sweep
+separately enumerates every registration TensorFlow holds for these ops and
+rejects any that is duplicated or that constrains an attribute the op does not
+have, since either makes an op unusable while looking registered.
+
+The two broken in TensorFlow are `TopK` and `TileGrad`, whose own CPU
+registrations constrain `index_type` and `Tmultiples`, attributes those ops do
+not have. Reproduced on a stock 2.18 and 2.20 with no plugin loaded.
 
 Verified on an Apple M4 Max, macOS 26.6, against the stock
 `tensorflow==2.20.0` wheel for Python 3.12:

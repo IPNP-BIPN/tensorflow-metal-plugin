@@ -37,6 +37,7 @@ MATCH, MISMATCH, GPU_ERROR, UNEXERCISED, NO_RECIPE = (
     "match", "mismatch", "gpu-error", "unexercised", "no-recipe")
 # Two kinds of "cannot be exercised" that are not gaps in the backend.
 REMOVED = "removed-from-tensorflow"
+BROKEN = "broken-in-tensorflow"
 OUT_OF_TREE = "needs-unexported-api"
 
 
@@ -225,6 +226,7 @@ NAMED = {}
 RANDOM = {}
 NO_CPU = {}
 INTERNAL = {}
+LAST_FEW = set()
 PRELUDE = {"_NcclBroadcastRecv": "_NcclBroadcastSend"}
 
 
@@ -340,6 +342,14 @@ def check_cudnn_rnn(name, kwargs, outputs):
     got = flatten_deep(outputs)
     worst = max(float(np.max(np.abs(a - b))) for a, b in zip(original, got))
     return worst == 0.0, f"round trips exactly ({worst:.1e})"
+  if "Backprop" in name:
+    every = flatten_deep(outputs)
+    if not all(np.all(np.isfinite(v)) for v in every):
+      return False, "not finite"
+    # A gradient that ignores what it is handed would pass everything else.
+    if all(float(np.max(np.abs(v))) == 0.0 for v in every):
+      return False, "every gradient is zero"
+    return True, "finite, and not identically zero"
   # The forward passes.
   values = flatten_deep(outputs)[0]
   if not np.all(np.isfinite(values)):
@@ -354,6 +364,39 @@ def check_cudnn_rnn(name, kwargs, outputs):
       return False, f"emits {beyond:.2e} past a sequence's length"
     return True, "finite, and silent past each sequence's length"
   return True, "finite"
+
+
+def check_last_few(name, kwargs, outputs):
+  """Properties for the ops with no usable CPU kernel in this release."""
+  first = np.asarray(outputs[0])
+  if name in ("TopK", "ApproxTopK"):
+    source = np.asarray(kwargs["input"])
+    k = int(kwargs["k"])
+    wanted = -np.sort(-source, axis=-1)[..., :k]
+    worst = float(np.max(np.abs(first - wanted)))
+    return worst < 1e-5, f"the {k} largest per row, to {worst:.1e}"
+  if name == "TileGrad":
+    source = np.asarray(kwargs["input"])
+    multiples = list(kwargs["multiples"])
+    wanted = source.reshape(multiples[0], -1, source.shape[1]).sum(axis=0)
+    worst = float(np.max(np.abs(first - wanted)))
+    return worst < 1e-4, f"sums the tiles to {worst:.1e}"
+  if name == "CTCLossV2":
+    # Not compared against CTCLoss: the two differ on purpose, V2 taking the
+    # blank as the last class where v1 takes it as the first. What holds for
+    # both is that a negative log likelihood is finite and not negative.
+    ok = bool(np.all(np.isfinite(first))) and float(np.min(first)) >= 0.0
+    return ok, f"finite and non-negative, smallest {float(np.min(first)):.3f}"
+  if name == "MaxPoolGradGradWithArgmax":
+    pooled = np.asarray(kwargs["argmax"])
+    return (np.all(np.isfinite(first)) and first.shape == pooled.shape,
+            f"finite, shaped {first.shape}")
+  if name == "GenerateBoundingBoxProposals":
+    # The output is padded to post_nms_topn, so its width says nothing; what
+    # can be said is that every box is finite and inside the image.
+    ok = bool(np.all(np.isfinite(first))) and float(np.min(first)) >= -1e-6
+    return ok, f"finite and non-negative, {first.shape[1]} slots"
+  return np.all(np.isfinite(first)), "finite"
 
 
 def check_no_cpu(name, kwargs, outputs):
@@ -429,6 +472,19 @@ def check_internal_without_cpu(name, inputs, outputs):
   """Properties for the internal ops TensorFlow has no CPU kernel for."""
   if not outputs:
     return True, "runs and produces nothing, which is its whole job"
+  if name == "_FusedBatchNormGradEx":
+    # Without a side input or an activation it is the plain gradient, and
+    # that one is checked against the CPU.
+    y_backprop, x, scale = inputs[0], inputs[1], inputs[2]
+    reserve_1, reserve_2 = inputs[3], inputs[4]
+    with tf.device("/GPU:0"):
+      plain = tf.raw_ops.FusedBatchNormGradV3(
+          y_backprop=y_backprop, x=x, scale=scale,
+          reserve_space_1=reserve_1, reserve_space_2=reserve_2,
+          reserve_space_3=tf.constant(0.0), epsilon=1e-3,
+          is_training=False)[0].numpy()
+    worst = float(np.max(np.abs(outputs[0] - plain)))
+    return worst < 1e-4, f"agrees with FusedBatchNormGradV3 to {worst:.2e}"
   if name == "_FusedBatchNormEx":
     # The fused form with no side input and no activation is the plain one,
     # and that is already checked against the CPU.
@@ -536,6 +592,11 @@ def main():
   RANDOM = recipes.nondeterministic()
   NO_CPU = recipes.no_cpu_reference()
   NO_CPU.update(recipes.cudnn_rnn_checks())
+  last = recipes.last_few()
+  NO_CPU.update(last)
+  NO_CPU.update(recipes.recurrent_backprops())
+  global LAST_FEW
+  LAST_FEW = set(last)
   global INTERNAL
   INTERNAL = recipes.internal()
 
@@ -602,10 +663,17 @@ def main():
         continue
       if name.startswith("CudnnRNN"):
         ok, detail = check_cudnn_rnn(name, kwargs, gpu)
+      elif name in LAST_FEW:
+        ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
+      continue
+    if name in recipes.BROKEN_IN_TENSORFLOW:
+      results[name] = BROKEN
+      details[name] = ("TensorFlow's own registration constrains an attribute "
+                       "the op lacks, on every device")
       continue
     if name in recipes.REMOVED_FROM_GRAPHDEF:
       results[name] = REMOVED
@@ -659,6 +727,8 @@ def main():
         continue
       if name.startswith("CudnnRNN"):
         ok, detail = check_cudnn_rnn(name, kwargs, gpu)
+      elif name in LAST_FEW:
+        ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
       results[name] = MATCH if ok else MISMATCH
@@ -729,8 +799,8 @@ def main():
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
-  order = [MISMATCH, GPU_ERROR, MATCH, REMOVED, OUT_OF_TREE, UNEXERCISED,
-           NO_RECIPE]
+  order = [MISMATCH, GPU_ERROR, MATCH, REMOVED, BROKEN, OUT_OF_TREE,
+           UNEXERCISED, NO_RECIPE]
   counts = {k: 0 for k in order}
   for value in results.values():
     counts[value] += 1

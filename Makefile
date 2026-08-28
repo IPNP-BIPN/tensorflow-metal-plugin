@@ -56,7 +56,7 @@ LDFLAGS := -dynamiclib $(FRAMEWORKS) \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test install
+.PHONY: all clean test sweep install
 
 all: $(OUT)
 
@@ -75,6 +75,10 @@ check-symbols: $(OUT)
 
 test: $(OUT)
 	$(PYTHON) tests/run_tests.py
+
+# Every registered op, through TensorFlow's own dispatch, against the CPU.
+sweep: $(OUT)
+	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py
 
 install: $(OUT)
 	$(PYTHON) -m pip install .

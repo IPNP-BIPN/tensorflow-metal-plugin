@@ -343,7 +343,19 @@ REMOVED_FROM_GRAPHDEF = {
     "BatchIFFT3D", "BatchMatrixBandPart", "BatchMatrixDiag",
     "BatchMatrixDiagPart", "BatchMatrixSetDiag", "BatchMatrixTriangularSolve",
     "QuantizeAndDequantize", "AdjustContrast",
+    "BatchNormWithGlobalNormalization", "BatchNormWithGlobalNormalizationGrad",
+    "Conv3DBackpropFilter", "Conv3DBackpropInput",
 }
+
+# Ops TensorFlow cannot run on any device, because its own kernel
+# registrations constrain an attribute the op does not have. Reproduced on a
+# stock 2.18 and 2.20 with no plugin loaded at all:
+#
+#   OpKernel 'TopK' has constraint on attr 'index_type' not in NodeDef
+#   OpKernel 'TileGrad' has constraint on attr 'Tmultiples' not in NodeDef
+#
+# This backend registers both correctly; there is simply no way to reach them.
+BROKEN_IN_TENSORFLOW = {"TopK", "TileGrad"}
 
 # Ops that need entry points a released TensorFlow does not export, so the
 # plugin deliberately leaves them to the host. In an in-tree build they are
@@ -830,6 +842,12 @@ def internal():
           ("T", ft, "U", ft, "epsilon", 1e-3, "exponential_avg_factor", 1.0,
            "num_side_inputs", 0, "activation_mode", b"Identity",
            "data_format", b"NHWC", "is_training", False), 6),
+      "_FusedBatchNormGradEx": (
+          [image, image, scale, mean, variance,
+           tf.constant([], dtype=tf.float32), offset, image],
+          ("T", ft, "U", ft, "epsilon", 1e-3, "num_side_inputs", 0,
+           "activation_mode", b"Identity", "data_format", b"NHWC",
+           "is_training", False), 5),
       "_NcclBroadcastSend": (
           [small], ("T", ft, "num_devices", 1, "shared_name", b"sweep"), 0),
       "_NcclBroadcastRecv": (
@@ -843,4 +861,99 @@ def internal():
                     "shared_name", b"sweep"), 1),
       "_TensorToHashBucketFast": (
           [integers], ("T", tf.int32.as_datatype_enum, "num_buckets", 7), 1),
+  }
+
+
+def last_few():
+  """The remainder: ops TensorFlow cannot run on the CPU, and a few stragglers.
+
+  TopK and TileGrad are here because TensorFlow's own CPU registrations for
+  them do not match their nodes in this release, so there is no reference to
+  compare against even though the ops are perfectly ordinary. They are checked
+  against what they mean instead.
+  """
+  with tf.device("/CPU:0"):
+    f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+    u = lambda *s: tf.constant(RNG.random(s).astype(np.float32) * 0.9 + 0.05)
+    values = u(6, 5)
+    tiled = f(12, 5)
+    image = f(2, 7, 9, 3)
+    logits = f(6, 2, 5)
+    lengths = tf.constant([6, 6], dtype=tf.int32)
+    argmax = tf.raw_ops.MaxPoolWithArgmax(input=image, ksize=[1, 2, 2, 1],
+                                          strides=[1, 2, 2, 1],
+                                          padding="VALID")
+    scores = tf.constant([[0.9, 0.75, 0.6, 0.5]], dtype=tf.float32)
+    boxes = tf.constant([[[0.0, 0.0, 0.6, 0.6], [0.1, 0.1, 0.9, 0.9],
+                          [0.5, 0.5, 1.0, 1.0], [0.2, 0.2, 0.4, 0.4]]],
+                        dtype=tf.float32)
+    anchors = tf.constant([[0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.5, 0.5],
+                           [0.5, 0.5, 1.0, 1.0], [0.2, 0.2, 0.6, 0.6]],
+                          dtype=tf.float32)
+  return {
+      "CTCLossV2": ({"inputs": logits,
+                     "labels_indices": tf.constant([[0, 0], [0, 1], [1, 0]],
+                                                   dtype=tf.int64),
+                     "labels_values": tf.constant([1, 2, 1], dtype=tf.int32),
+                     "sequence_length": lengths},
+                    "agrees with CTCLoss"),
+      "MaxPoolGradGradWithArgmax": (
+          {"input": image, "grad": tf.ones_like(image), "argmax": argmax[1],
+           "ksize": [1, 2, 2, 1], "strides": [1, 2, 2, 1], "padding": "VALID"},
+          "finite, and shaped like the pooled output"),
+      "ApproxTopK": ({"input": values, "k": 3},
+                     "the three largest, in order"),
+      "RaggedFillEmptyRowsGrad": (
+          {"reverse_index_map": tf.constant([0, 1, 2, 3], dtype=tf.int64),
+           "grad_values": f(4)},
+          "finite"),
+      "GenerateBoundingBoxProposals": (
+          {"scores": tf.reshape(scores, [1, 1, 1, 4]),
+           "bbox_deltas": tf.zeros([1, 1, 1, 16], dtype=tf.float32),
+           "image_info": tf.constant([[1.0, 1.0, 1.0]], dtype=tf.float32),
+           "anchors": anchors, "nms_threshold": 0.7, "pre_nms_topn": 4,
+           "min_size": 0.0},
+          "finite, and no more boxes than were offered"),
+  }
+
+
+def recurrent_backprops():
+  """The recurrent gradients, which have no CPU kernel either.
+
+  Checked for being finite, repeatable, and for actually depending on the
+  incoming gradient: a backward pass that returns zeros whatever it is handed
+  would otherwise pass every other test here.
+  """
+  with tf.device("/CPU:0"):
+    layers, units, inputs, batch, steps = 1, 4, 5, 3, 6
+    f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+    weights = [f(units, inputs) for _ in range(4)] + \
+              [f(units, units) for _ in range(4)]
+    biases = [f(units) for _ in range(8)]
+    sequence, state = f(steps, batch, inputs), f(layers, batch, units)
+  with tf.device("/GPU:0"):
+    params = tf.raw_ops.CudnnRNNCanonicalToParams(
+        num_layers=layers, num_units=units, input_size=inputs,
+        weights=weights, biases=biases)
+    forward = tf.raw_ops.CudnnRNN(input=sequence, input_h=state,
+                                  input_c=state, params=params,
+                                  is_training=True)
+  with tf.device("/CPU:0"):
+    output_grad = f(steps, batch, units)
+    state_grad = f(layers, batch, units)
+  common = {"input": sequence, "input_h": state, "input_c": state,
+            "params": params, "output": forward[0], "output_h": forward[1],
+            "output_c": forward[2], "output_backprop": output_grad,
+            "output_h_backprop": state_grad, "output_c_backprop": state_grad,
+            "reserve_space": forward[3]}
+  return {
+      "CudnnRNNBackprop": (dict(common), "finite, repeatable, and not zero"),
+      "CudnnRNNBackpropV2": (
+          dict(common, host_reserved=tf.constant([], dtype=tf.int8)),
+          "finite, repeatable, and not zero"),
+      "CudnnRNNBackpropV3": (
+          dict(common,
+               sequence_lengths=tf.constant([6, 4, 2], dtype=tf.int32),
+               host_reserved=tf.constant([], dtype=tf.int8)),
+          "finite, repeatable, and not zero"),
   }
