@@ -74,7 +74,7 @@ check-symbols: $(OUT)
 	@bash tools/check_symbols.sh $(OUT)
 
 test: $(OUT)
-	$(PYTHON) -m pytest -q tests
+	$(PYTHON) tests/run_tests.py
 
 install: $(OUT)
 	$(PYTHON) -m pip install .
