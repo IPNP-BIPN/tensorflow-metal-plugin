@@ -119,10 +119,15 @@ The optimisers are the whole of that list that matters: **without them there is
 no training on the GPU**, only inference and manual gradient work. They run on
 the host instead, which is correct and slow.
 
-This is not something an out-of-tree plugin can work around. The functions are
-not merely unexported on macOS; nothing in the wheel defines them where a
-plugin can reach. Fixing it means TensorFlow exporting them, which is a change
-to TensorFlow, not to this repository.
+This is a regression, not a standing limitation. All fourteen symbols of
+`tensorflow/c/kernels_experimental.cc` are exported by `libtensorflow_framework`
+in 2.19.1 and 2.18.1, and absent from every binary in the 2.20.0 wheel, with
+none added in exchange. The headers still declare them. Filed upstream as
+[tensorflow/tensorflow#126374](https://github.com/tensorflow/tensorflow/issues/126374).
+
+So this is not something the plugin can work around, and it is not permanent
+either: when those exports come back, the fifteen ops below start working here
+with no change to this repository.
 
 It is also the sharpest argument for the in-tree form, where the same code
 links these functions directly and all fifteen ops work. That trade is the
