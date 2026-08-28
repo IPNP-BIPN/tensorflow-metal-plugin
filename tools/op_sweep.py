@@ -26,6 +26,8 @@ from tensorflow.python.framework import kernels
 from tensorflow.python.framework import load_library
 from tensorflow.python.framework import op_def_registry
 
+import recipes
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
@@ -215,10 +217,13 @@ def by_name():
 # reported all 111 exercised ops as having no GPU kernel, which was the sweep
 # describing its own mistake.
 NAMED = {}
+RANDOM = {}
 
 
 def synthesize(op_def):
   """A call for an op, or None when no recipe covers it."""
+  if op_def.name in RANDOM:
+    return dict(RANDOM[op_def.name])
   if op_def.name in NAMED:
     return dict(NAMED[op_def.name])
   signature = tuple(a.name for a in op_def.input_arg)
@@ -278,11 +283,27 @@ def flatten(result):
   return [np.asarray(result)]
 
 
-def compare(cpu, gpu):
+# Outputs the op def calls scratch: their contents are the kernel's own
+# business, are documented as opaque, and differ between implementations on
+# purpose. TensorFlow's CPU kernel leaves the batch-norm reserve spaces zero
+# during inference; this backend writes the statistics into them. What has to
+# agree is the gradient that reads them, which is exercised on its own.
+OPAQUE_OUTPUTS = {
+    "FusedBatchNorm": (3, 4),
+    "FusedBatchNormV2": (3, 4),
+    "FusedBatchNormV3": (3, 4),
+    "_FusedBatchNormEx": (3, 4),
+}
+
+
+def compare(cpu, gpu, op_name=""):
   if len(cpu) != len(gpu):
     return False, "different output counts"
+  skip = OPAQUE_OUTPUTS.get(op_name, ())
   worst = 0.0
-  for a, b in zip(cpu, gpu):
+  for index, (a, b) in enumerate(zip(cpu, gpu)):
+    if index in skip:
+      continue
     if a.shape != b.shape:
       return False, f"shape {b.shape} vs {a.shape}"
     if a.dtype.kind in "fc":
@@ -290,9 +311,11 @@ def compare(cpu, gpu):
         continue
       worst = max(worst, float(np.max(np.abs(a - b))) if a.size else 0.0)
       if not np.allclose(a, b, rtol=1e-3, atol=1e-3, equal_nan=True):
-        return False, f"max diff {worst:.3e}"
+        # Which output, because an op with six of them says nothing useful
+        # otherwise.
+        return False, f"output {index} differs by {worst:.3e}"
     elif not np.array_equal(a, b):
-      return False, "values differ"
+      return False, f"output {index} differs in value"
   return True, f"max diff {worst:.2e}"
 
 
@@ -311,8 +334,10 @@ def main():
     print("no GPU device after loading the plugin, nothing to sweep")
     return 1
   print(f"sweeping against {devices[0]}")
-  global NAMED
+  global NAMED, RANDOM
   NAMED = by_name()
+  NAMED.update(recipes.build())
+  RANDOM = recipes.nondeterministic()
 
   ops = load_ops(args.ops)
   if args.only:
@@ -337,6 +362,25 @@ def main():
       results[name] = NO_RECIPE
       details[name] = "no generic call"
       continue
+    if name in RANDOM:
+      try:
+        gpu = flatten(run(name, kwargs, "/GPU:0"))
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      # A random op cannot be compared to the CPU, so it is asked for the two
+      # things a broken generator gets wrong: values that are not finite, and
+      # values that are all the same.
+      bad = []
+      for array in gpu:
+        if array.dtype.kind == "f" and not np.all(np.isfinite(array)):
+          bad.append("not finite")
+        if array.size > 1 and np.all(array == array.flat[0]):
+          bad.append("constant")
+      results[name] = MISMATCH if bad else MATCH
+      details[name] = ", ".join(bad) if bad else "random, finite and varying"
+      continue
     try:
       cpu = flatten(run(name, kwargs, "/CPU:0"))
     except Exception as error:  # pylint: disable=broad-except
@@ -349,7 +393,7 @@ def main():
       results[name] = GPU_ERROR
       details[name] = str(error).splitlines()[0][:110]
       continue
-    ok, detail = compare(cpu, gpu)
+    ok, detail = compare(cpu, gpu, name)
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
