@@ -334,6 +334,152 @@ def _build():
   return recipes
 
 
+# Ops TensorFlow itself will not run any more, whatever the device: their
+# kernels raise "not available in GraphDef version ... It has been removed in
+# version ...". They are registered here because the CUDA build registers
+# them, and a registration is all either build can offer.
+REMOVED_FROM_GRAPHDEF = {
+    "BatchFFT", "BatchFFT2D", "BatchFFT3D", "BatchIFFT", "BatchIFFT2D",
+    "BatchIFFT3D", "BatchMatrixBandPart", "BatchMatrixDiag",
+    "BatchMatrixDiagPart", "BatchMatrixSetDiag", "BatchMatrixTriangularSolve",
+    "QuantizeAndDequantize", "AdjustContrast",
+}
+
+# Ops that need entry points a released TensorFlow does not export, so the
+# plugin deliberately leaves them to the host. In an in-tree build they are
+# registered and work; out of tree there is nothing to test.
+NEEDS_UNEXPORTED_C_API = {
+    "Assign", "AssignAdd", "AssignSub",
+    "ResourceApplyAdam", "ResourceApplyGradientDescent",
+    "ResourceApplyKerasMomentum", "ResourceApplyMomentum",
+    "ResourceApplyRMSProp",
+    "ResourceGather", "ResourceGatherNd", "ResourceScatterUpdate",
+    "ParallelConcat", "_ParallelConcatStart", "_ParallelConcatUpdate",
+}
+
+
+def more():
+  with tf.device("/CPU:0"):
+    return _more()
+
+
+def _more():
+  f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+  u = lambda *s: tf.constant(RNG.random(s).astype(np.float32) * 0.9 + 0.05)
+  small = u(6, 5)
+  square = tf.constant(RNG.random((5, 5)).astype(np.float32) + np.eye(5, dtype=np.float32) * 4)
+  symmetric = tf.constant(((square + tf.transpose(square)) / 2).numpy())
+  complex_1d = tf.complex(f(2, 8), f(2, 8))
+  complex_2d = tf.complex(f(2, 4, 8), f(2, 4, 8))
+  complex_3d = tf.complex(f(2, 4, 4, 8), f(2, 4, 4, 8))
+  boolean = tf.constant(RNG.random((6, 5)) > 0.5)
+  image = f(2, 7, 9, 3)
+  # One recurrent step's worth of state, shared by the block cells.
+  batch, units, inputs, steps = 3, 4, 5, 6
+  x_seq = f(steps, batch, inputs)
+  h0 = f(batch, units)
+  c0 = f(batch, units)
+  w_lstm = f(inputs + units, 4 * units)
+  b_lstm = f(4 * units)
+  wci = f(units)
+
+  recipes = {
+      # Reductions name their axis input "axis" in the generated wrappers even
+      # though the op def calls it reduction_indices.
+      "Sum": {"input": small, "axis": [1]},
+      "Mean": {"input": small, "axis": [1]},
+      "Max": {"input": small, "axis": [1]},
+      "Min": {"input": small, "axis": [1]},
+      "Prod": {"input": small, "axis": [1]},
+      "All": {"input": boolean, "axis": [1]},
+      "Any": {"input": boolean, "axis": [1]},
+      "EuclideanNorm": {"input": small, "axis": [1]},
+
+      "LogicalAnd": {"x": boolean, "y": tf.constant(RNG.random((6, 5)) > 0.5)},
+      "LogicalOr": {"x": boolean, "y": tf.constant(RNG.random((6, 5)) > 0.5)},
+      "LogicalNot": {"x": boolean},
+      "Select": {"condition": boolean, "x": small, "y": u(6, 5)},
+      "Conj": {"input": complex_1d},
+
+      "AvgPool": {"value": image, "ksize": [1, 2, 2, 1],
+                  "strides": [1, 2, 2, 1], "padding": "VALID"},
+      "TopK": {"input": small, "k": 3},
+      "Split": {"axis": 0, "value": small, "num_split": 2},
+      "TileGrad": {"input": f(12, 5), "multiples": [2, 1]},
+      "UniqueWithCounts": {"x": tf.constant([1, 2, 2, 3, 1], dtype=tf.int32)},
+      "DiagPart": {"input": f(5, 5)},
+      "Lu": {"input": square},
+      "SelfAdjointEigV2": {"input": symmetric, "compute_v": True},
+      "GatherV2": {"params": small, "indices": tf.constant([0, 2, 1],
+                                                           dtype=tf.int32),
+                   "axis": 0},
+      "GatherNd": {"params": small,
+                   "indices": tf.constant([[0, 1], [2, 3]], dtype=tf.int32)},
+      "BatchMatMul": {"x": f(2, 4, 5), "y": f(2, 5, 3)},
+      "BatchMatMulV3": {"x": f(2, 4, 5), "y": f(2, 5, 3), "Tout": tf.float32},
+
+      # The complex transforms, forward and inverse, in one to three
+      # dimensions.
+      "FFT": {"input": complex_1d},
+      "IFFT": {"input": complex_1d},
+      "FFT2D": {"input": complex_2d},
+      "IFFT2D": {"input": complex_2d},
+      "FFT3D": {"input": complex_3d},
+      "IFFT3D": {"input": complex_3d},
+      "FFTND": {"input": complex_2d, "fft_length": [4, 8], "axes": [1, 2]},
+      "IFFTND": {"input": complex_2d, "fft_length": [4, 8], "axes": [1, 2]},
+      "RFFTND": {"input": f(2, 4, 8), "fft_length": [4, 8], "axes": [1, 2]},
+      "IRFFTND": {"input": tf.signal.rfft2d(f(2, 4, 8)),
+                  "fft_length": [4, 8], "axes": [1, 2]},
+
+      # Gradients whose forward pass is already checked.
+      "Conv3DBackpropInput": {
+          "input_sizes": [2, 4, 5, 6, 3], "filter": f(2, 3, 3, 3, 4),
+          "out_backprop": f(2, 4, 5, 6, 4),
+          "strides": [1, 1, 1, 1, 1], "padding": "SAME"},
+      "Conv3DBackpropFilter": {
+          "input": f(2, 4, 5, 6, 3), "filter": f(2, 3, 3, 3, 4),
+          "out_backprop": f(2, 4, 5, 6, 4),
+          "strides": [1, 1, 1, 1, 1], "padding": "SAME"},
+      "StridedSliceGrad": {"shape": [6, 5], "begin": [0, 1], "end": [5, 4],
+                           "strides": [2, 1], "dy": f(3, 3)},
+      "Dilation2DBackpropInput": {
+          "input": image, "filter": f(2, 2, 3),
+          "out_backprop": tf.nn.dilation2d(
+              image, f(2, 2, 3), [1, 1, 1, 1], "SAME", "NHWC", [1, 1, 1, 1]),
+          "strides": [1, 1, 1, 1], "rates": [1, 1, 1, 1], "padding": "SAME"},
+      "Dilation2DBackpropFilter": {
+          "input": image, "filter": f(2, 2, 3),
+          "out_backprop": tf.nn.dilation2d(
+              image, f(2, 2, 3), [1, 1, 1, 1], "SAME", "NHWC", [1, 1, 1, 1]),
+          "strides": [1, 1, 1, 1], "rates": [1, 1, 1, 1], "padding": "SAME"},
+
+      # The recurrent block cells.
+      "LSTMBlockCell": {
+          "x": f(batch, inputs), "cs_prev": c0, "h_prev": h0, "w": w_lstm,
+          "wci": wci, "wcf": wci, "wco": wci, "b": b_lstm},
+      "BlockLSTM": {
+          "seq_len_max": tf.constant(steps, dtype=tf.int64), "x": x_seq,
+          "cs_prev": c0, "h_prev": h0, "w": w_lstm, "wci": wci, "wcf": wci,
+          "wco": wci, "b": b_lstm},
+      "BlockLSTMV2": {
+          "seq_len_max": tf.constant(steps, dtype=tf.int64), "x": x_seq,
+          "cs_prev": c0, "h_prev": h0, "w": w_lstm, "wci": wci, "wcf": wci,
+          "wco": wci, "b": b_lstm},
+      "GRUBlockCell": {
+          "x": f(batch, inputs), "h_prev": h0,
+          "w_ru": f(inputs + units, 2 * units), "w_c": f(inputs + units, units),
+          "b_ru": f(2 * units), "b_c": f(units)},
+
+      # The collectives, over the one device this backend has.
+      "NcclAllReduce": {"input": small, "reduction": "sum", "num_devices": 1,
+                        "shared_name": "one"},
+      "NcclBroadcast": {"input": small, "shape": [6, 5]},
+      "NcclReduce": {"input": [small], "reduction": "sum"},
+  }
+  return recipes
+
+
 # Random ops cannot be compared against the CPU: the point of them is that the
 # answer differs. They are checked for shape, dtype, finiteness and for not
 # being constant, which is what a broken generator usually returns.
@@ -368,4 +514,36 @@ def _nondeterministic():
           "shape": [4], "key": tf.constant([1], dtype=tf.uint64),
           "counter": tf.constant([1, 2], dtype=tf.uint64), "alg": 3,
           "alpha": tf.constant([2.0, 3.0, 2.0, 3.0])},
+  }
+
+
+# Ops TensorFlow has no CPU kernel for, so there is nothing to compare
+# against. Each is checked against a property that pins it down instead.
+def no_cpu_reference():
+  with tf.device("/CPU:0"):
+    return _no_cpu_reference()
+
+
+def _no_cpu_reference():
+  f = lambda *s: tf.constant(RNG.standard_normal(s, dtype=np.float32))
+  real = f(2, 4, 8)
+  spectrum = tf.signal.rfft2d(real)
+  complex_2d = tf.complex(f(2, 4, 8), f(2, 4, 8))
+  small = tf.constant(RNG.random((6, 5)).astype(np.float32))
+  return {
+      "FFTND": ({"input": complex_2d, "fft_length": [4, 8], "axes": [1, 2]},
+                "round trip through IFFTND"),
+      "IFFTND": ({"input": complex_2d, "fft_length": [4, 8], "axes": [1, 2]},
+                 "round trip through FFTND"),
+      "RFFTND": ({"input": real, "fft_length": [4, 8], "axes": [1, 2]},
+                 "matches RFFT2D"),
+      "IRFFTND": ({"input": spectrum, "fft_length": [4, 8], "axes": [1, 2]},
+                  "matches IRFFT2D"),
+      "NcclAllReduce": ({"input": small, "reduction": "sum",
+                         "num_devices": 1, "shared_name": "sweep"},
+                        "reducing over one device is a copy"),
+      "NcclBroadcast": ({"input": small, "shape": [6, 5]},
+                        "broadcasting to one device is a copy"),
+      "NcclReduce": ({"input": [small], "reduction": "sum"},
+                     "reducing one input is a copy"),
   }

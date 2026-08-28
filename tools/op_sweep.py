@@ -33,6 +33,9 @@ ROOT = os.path.dirname(HERE)
 
 MATCH, MISMATCH, GPU_ERROR, UNEXERCISED, NO_RECIPE = (
     "match", "mismatch", "gpu-error", "unexercised", "no-recipe")
+# Two kinds of "cannot be exercised" that are not gaps in the backend.
+REMOVED = "removed-from-tensorflow"
+OUT_OF_TREE = "needs-unexported-api"
 
 
 def load_ops(path):
@@ -218,6 +221,7 @@ def by_name():
 # describing its own mistake.
 NAMED = {}
 RANDOM = {}
+NO_CPU = {}
 
 
 def synthesize(op_def):
@@ -267,6 +271,105 @@ def duplicate_registrations(ops):
     extra = sum(count - 1 for count in seen.values() if count > 1)
     if extra:
       found[name] = extra
+  return found
+
+
+# Decompositions whose output is not unique: the pivot order of an LU and the
+# sign of an eigenvector are both free, so comparing to the CPU compares two
+# valid answers and calls them different. Each is checked against the identity
+# that defines it instead, which is a stronger statement than agreeing with
+# another implementation.
+def check_lu(kwargs, outputs):
+  packed, pivots = outputs[0], outputs[1]
+  n = packed.shape[-1]
+  lower = np.tril(packed, -1) + np.eye(n, dtype=packed.dtype)
+  upper = np.triu(packed)
+  product = lower @ upper
+  # TensorFlow reports p as the permutation itself, one row index per output
+  # row, not as a sequence of swaps.
+  order = [int(i) for i in pivots]
+  original = np.asarray(kwargs["input"])
+  worst = float(np.max(np.abs(product - original[order, :])))
+  return worst < 1e-4, f"P A = L U to {worst:.2e}"
+
+
+def check_self_adjoint_eig(kwargs, outputs):
+  values, vectors = outputs[0], outputs[1]
+  original = np.asarray(kwargs["input"])
+  rebuilt = vectors @ np.diag(values) @ vectors.T
+  worst = float(np.max(np.abs(rebuilt - original)))
+  orthonormal = float(np.max(np.abs(vectors.T @ vectors
+                                    - np.eye(vectors.shape[0]))))
+  ok = worst < 1e-3 and orthonormal < 1e-4
+  return ok, f"V diag(e) V^T to {worst:.2e}, orthonormal to {orthonormal:.2e}"
+
+
+def check_no_cpu(name, kwargs, outputs):
+  """Verifies an op TensorFlow cannot run on the CPU against a property."""
+  first = np.asarray(outputs[0])
+  if name in ("FFTND", "IFFTND"):
+    inverse = "IFFTND" if name == "FFTND" else "FFTND"
+    with tf.device("/GPU:0"):
+      back = getattr(tf.raw_ops, inverse)(
+          input=tf.constant(first), fft_length=kwargs["fft_length"],
+          axes=kwargs["axes"]).numpy()
+    worst = float(np.max(np.abs(back - np.asarray(kwargs["input"]))))
+    return worst < 1e-3, f"round trip to {worst:.2e}"
+  if name == "RFFTND":
+    with tf.device("/GPU:0"):
+      reference = tf.raw_ops.RFFT2D(input=kwargs["input"],
+                                    fft_length=kwargs["fft_length"]).numpy()
+    worst = float(np.max(np.abs(first - reference)))
+    return worst < 1e-4, f"agrees with RFFT2D to {worst:.2e}"
+  if name == "IRFFTND":
+    with tf.device("/GPU:0"):
+      reference = tf.raw_ops.IRFFT2D(input=kwargs["input"],
+                                     fft_length=kwargs["fft_length"]).numpy()
+    worst = float(np.max(np.abs(first - reference)))
+    return worst < 1e-4, f"agrees with IRFFT2D to {worst:.2e}"
+  # The collectives over one device: the output is the input.
+  source = kwargs["input"]
+  if isinstance(source, list):
+    source = source[0]
+  worst = float(np.max(np.abs(first - np.asarray(source))))
+  return worst == 0.0, f"copies its input exactly ({worst:.2e})"
+
+
+BY_IDENTITY = {
+    "Lu": check_lu,
+    "SelfAdjointEigV2": check_self_adjoint_eig,
+}
+
+
+def invalid_constraints(ops):
+  """Registrations constraining an attribute the op does not have.
+
+  TensorFlow reports these as "OpKernel 'X' has constraint on attr 'T' not in
+  NodeDef", and the registration can never match: the op is registered and
+  unusable, exactly like a duplicate. All, Any and the logical operators have
+  no T because they are bool; BatchMatMulV3 has Ta, Tb and Tout; GatherV2 has
+  Tparams, Tindices and Taxis; TopK has no index_type. Constraining T on any
+  of them is a registration that describes an op that does not exist.
+  """
+  found = {}
+  for name in ops:
+    op_def = op_def_registry.get(name)
+    if op_def is None:
+      continue
+    known = {attr.name for attr in op_def.attr}
+    try:
+      registered = kernels.get_registered_kernels_for_op(name).kernel
+    except Exception:  # pylint: disable=broad-except
+      continue
+    bad = set()
+    for kernel in registered:
+      if kernel.device_type != "GPU":
+        continue
+      for constraint in kernel.constraint:
+        if constraint.name not in known:
+          bad.add(constraint.name)
+    if bad:
+      found[name] = sorted(bad)
   return found
 
 
@@ -334,14 +437,23 @@ def main():
     print("no GPU device after loading the plugin, nothing to sweep")
     return 1
   print(f"sweeping against {devices[0]}")
-  global NAMED, RANDOM
+  global NAMED, RANDOM, NO_CPU
   NAMED = by_name()
   NAMED.update(recipes.build())
+  NAMED.update(recipes.more())
   RANDOM = recipes.nondeterministic()
+  NO_CPU = recipes.no_cpu_reference()
 
   ops = load_ops(args.ops)
   if args.only:
     ops = [o for o in ops if args.only in o]
+
+  wrong_attrs = invalid_constraints(ops)
+  if wrong_attrs:
+    print(f"\n=== registrations constraining an attribute the op lacks "
+          f"({len(wrong_attrs)})")
+    for name in sorted(wrong_attrs):
+      print(f"  {name:38s} {', '.join(wrong_attrs[name])}")
 
   duplicates = duplicate_registrations(ops)
   if duplicates:
@@ -352,6 +464,39 @@ def main():
   results = {}
   details = {}
   for name in ops:
+    if name in NO_CPU:
+      kwargs, what = NO_CPU[name]
+      try:
+        gpu = flatten(run(name, dict(kwargs), "/GPU:0"))
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      ok, detail = check_no_cpu(name, kwargs, gpu)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = f"{what}: {detail}"
+      continue
+    if name in recipes.REMOVED_FROM_GRAPHDEF:
+      results[name] = REMOVED
+      details[name] = "TensorFlow removed this op; no device can run it"
+      continue
+    if name in recipes.NEEDS_UNEXPORTED_C_API:
+      results[name] = OUT_OF_TREE
+      details[name] = ("needs kernel C API entry points a released "
+                       "TensorFlow does not export")
+      continue
+    if name in NO_CPU:
+      kwargs, what = NO_CPU[name]
+      try:
+        gpu = flatten(run(name, dict(kwargs), "/GPU:0"))
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      ok, detail = check_no_cpu(name, kwargs, gpu)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = f"{what}: {detail}"
+      continue
     op_def = op_def_registry.get(name)
     if op_def is None:
       results[name] = NO_RECIPE
@@ -393,11 +538,32 @@ def main():
       results[name] = GPU_ERROR
       details[name] = str(error).splitlines()[0][:110]
       continue
-    ok, detail = compare(cpu, gpu, name)
+    # Run it a second time with the same inputs and require the same answer.
+    # An op that writes over its own input, or that leaves state behind,
+    # gives the right answer once and a different one after: an inverse real
+    # transform transformed its caller's tensor in place and only the first
+    # call was right, which a single-shot comparison cannot see.
+    try:
+      again = flatten(run(name, kwargs, "/GPU:0"))
+    except Exception as error:  # pylint: disable=broad-except
+      results[name] = GPU_ERROR
+      details[name] = f"second call: {str(error).splitlines()[0][:90]}"
+      continue
+    stable, detail = compare(gpu, again, name)
+    if not stable:
+      results[name] = MISMATCH
+      details[name] = f"not repeatable: {detail}"
+      continue
+
+    if name in BY_IDENTITY:
+      ok, detail = BY_IDENTITY[name](kwargs, gpu)
+    else:
+      ok, detail = compare(cpu, gpu, name)
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
-  order = [MISMATCH, GPU_ERROR, MATCH, UNEXERCISED, NO_RECIPE]
+  order = [MISMATCH, GPU_ERROR, MATCH, REMOVED, OUT_OF_TREE, UNEXERCISED,
+           NO_RECIPE]
   counts = {k: 0 for k in order}
   for value in results.values():
     counts[value] += 1
@@ -418,9 +584,11 @@ def main():
 
   print("\n=== summary")
   for kind in order:
-    print(f"  {kind:14s} {counts[kind]}")
-  print(f"  {'duplicates':14s} {len(duplicates)}")
-  return 1 if counts[MISMATCH] or counts[GPU_ERROR] or duplicates else 0
+    print(f"  {kind:22s} {counts[kind]}")
+  print(f"  {'duplicates':22s} {len(duplicates)}")
+  print(f"  {'wrong-attr constraints':22s} {len(wrong_attrs)}")
+  return (1 if counts[MISMATCH] or counts[GPU_ERROR] or duplicates
+          or wrong_attrs else 0)
 
 
 if __name__ == "__main__":
