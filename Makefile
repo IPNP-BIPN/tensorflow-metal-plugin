@@ -108,7 +108,7 @@ LDFLAGS := -dynamiclib -mmacosx-version-min=$(MACOS_MIN) $(FRAMEWORKS) \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test test-stream test-load sweep kernels install
+.PHONY: all clean test test-stream test-load sweep kernels benchmark install
 
 all: $(OUT)
 
@@ -153,6 +153,13 @@ test-stream: $(BUILD)/stream_executor_test
 # as something someone has to have been watching the terminal for.
 sweep: $(OUT)
 	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py --report docs/op_errors.md
+
+# The same work on both devices, and whether the GPU is worth it. Runs the
+# whole suite five times, because the variance that matters on a laptop is
+# between runs rather than within one.
+benchmark: $(OUT)
+	$(PYTHON) benchmarks/benchmark.py --plugin $(OUT) --repeats 5 \
+	  --report BENCHMARKS.md
 
 # Regenerates the table of what the plugin registers, by asking TensorFlow
 # rather than by anyone remembering to update it.
