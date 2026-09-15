@@ -69,8 +69,17 @@ endif
 # field to a struct recompiled only the file it was declared in and left the
 # rest reading the old layout, which shows up as a stream reporting a failure
 # that never happened.
+# macOS 15, because that is what the code already requires. The backend
+# aliases an MTLBuffer through MPSNDArray with -initWithBuffer:offset:
+# descriptor:, which arrived in macOS 15 and which nothing here guards or
+# falls back from; without it there is no zero-copy path at all. Claiming 13.0
+# meant the compiler warned twenty times about calling APIs newer than the
+# target and then built a library that would have met an unrecognised selector
+# on the first convolution.
+MACOS_MIN := 15.0
+
 CXXFLAGS := -std=c++17 -O2 -fPIC -isysroot $(SDK) $(COMPAT) -MMD -MP \
-            -mmacosx-version-min=13.0 \
+            -mmacosx-version-min=$(MACOS_MIN) \
             -Isrc -I$(TF_INCLUDE) \
             -I$(TF_INCLUDE)/external/farmhash_archive/src \
             -DNDEBUG -DTF_METAL_OUT_OF_TREE \
@@ -90,7 +99,11 @@ FRAMEWORKS := -framework Metal -framework MetalPerformanceShaders \
 # first call, so an ordinary reference to one of those would make dlopen fail
 # outright. Weak references bind to null instead, and the kernels that need
 # them are not registered when they are null (see ResourceVariableApiAvailable).
-LDFLAGS := -dynamiclib $(FRAMEWORKS) \
+# The deployment target has to be repeated here. CXXFLAGS does not reach the
+# link, and without it ld stamps LC_BUILD_VERSION with the version of the
+# machine doing the build, so a dylib built on a current Mac claimed to need
+# that Mac's macOS and dyld would refuse to load it anywhere older.
+LDFLAGS := -dynamiclib -mmacosx-version-min=$(MACOS_MIN) $(FRAMEWORKS) \
            -L$(TF_LIB) -ltensorflow_framework.2 \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)

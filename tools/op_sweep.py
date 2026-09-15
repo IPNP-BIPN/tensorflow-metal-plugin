@@ -672,7 +672,13 @@ def write_report(path, rows, results):
         "value that is itself rounding noise reports a relative error of one "
         "for two answers that agree perfectly well. The count of elements "
         "excluded that way is the last column, so the exclusion is visible "
-        "rather than silent.\n\n")
+        "rather than silent.\n\n"
+        "A few rows move slightly between runs on otherwise identical inputs. "
+        "The gradient kernels that accumulate through atomics, the Dilation2D "
+        "and CropAndResize gradients among them, add their contributions in "
+        "whatever order the GPU schedules them, and floating point addition "
+        "is not associative. A row that moves in the last digit or two is "
+        "that, not a regression.\n\n")
     report.write("| Op | dtypes | max abs error | max rel error | "
                  "elements | below rel floor |\n")
     report.write("| --- | --- | ---: | ---: | ---: | ---: |\n")

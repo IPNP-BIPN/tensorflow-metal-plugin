@@ -6,6 +6,8 @@ Every op is run once on the GPU and once on the CPU kernel for the same op, with
 
 Relative error ignores elements whose CPU value is below 1e-06, because dividing a rounding difference by a value that is itself rounding noise reports a relative error of one for two answers that agree perfectly well. The count of elements excluded that way is the last column, so the exclusion is visible rather than silent.
 
+A few rows move slightly between runs on otherwise identical inputs. The gradient kernels that accumulate through atomics, the Dilation2D and CropAndResize gradients among them, add their contributions in whatever order the GPU schedules them, and floating point addition is not associative. A row that moves in the last digit or two is that, not a regression.
+
 | Op | dtypes | max abs error | max rel error | elements | below rel floor |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `FusedBatchNormGrad` | float32 | 1.953e-03 | 3.632e-07 | 384 | 0 |
@@ -16,8 +18,8 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `Conv3DBackpropInputV2` | float32 | 6.104e-05 | 1.249e-04 | 720 | 0 |
 | `DepthwiseConv2dNativeBackpropFilter` | float32 | 3.052e-05 | 1.054e-04 | 108 | 0 |
 | `DepthwiseConv2dNativeBackpropInput` | float32 | 3.052e-05 | 3.416e-06 | 378 | 0 |
+| `Dilation2DBackpropFilter` | float32 | 3.052e-05 | 1.936e-07 | 12 | 0 |
 | `Conv2DBackpropInput` | float32 | 1.526e-05 | 1.082e-04 | 378 | 0 |
-| `Dilation2DBackpropFilter` | float32 | 1.526e-05 | 1.679e-07 | 12 | 0 |
 | `CropAndResizeGradBoxes` | float32 | 7.629e-06 | 3.344e-07 | 8 | 0 |
 | `FFT3D` | complex64 | 5.395e-06 | 1.031e-06 | 256 | 0 |
 | `RFFT3D` | complex64 | 3.932e-06 | 1.988e-06 | 160 | 0 |
@@ -32,13 +34,13 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `FFT` | complex64 | 1.066e-06 | 1.990e-07 | 16 | 0 |
 | `BatchMatMulV2` | float32 | 9.537e-07 | 1.489e-05 | 1296 | 0 |
 | `BlockLSTMGrad` | float32 | 9.537e-07 | 6.001e-05 | 286 | 12 |
-| `Dilation2DBackpropInput` | float32 | 9.537e-07 | 1.018e-07 | 378 | 175 |
 | `CTCLoss` | float32 | 6.855e-07 | 7.570e-06 | 62 | 0 |
 | `RFFT2D` | complex64 | 5.331e-07 | 1.834e-07 | 40 | 0 |
 | `AdjustHue` | float32 | 5.066e-07 | 1.850e-06 | 378 | 0 |
 | `AdjustContrastv2` | float32 | 4.768e-07 | 2.237e-06 | 378 | 0 |
 | `BlockLSTM` | float32 | 4.768e-07 | 1.444e-05 | 504 | 0 |
 | `BlockLSTMGradV2` | float32 | 4.768e-07 | 6.588e-05 | 286 | 12 |
+| `Dilation2DBackpropInput` | float32 | 4.768e-07 | 9.563e-08 | 378 | 175 |
 | `FusedBatchNorm` | float32 | 4.768e-07 | 1.591e-05 | 384 | 0 |
 | `FusedBatchNormV2` | float32 | 4.768e-07 | 1.591e-05 | 384 | 0 |
 | `FusedBatchNormV3` | float32 | 4.768e-07 | 1.591e-05 | 385 | 1 |
@@ -86,6 +88,7 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `Asinh` | float32 | 5.960e-08 | 1.587e-07 | 30 | 0 |
 | `Atan2` | float32 | 5.960e-08 | 7.589e-08 | 30 | 0 |
 | `Cos` | float32 | 5.960e-08 | 7.981e-08 | 30 | 0 |
+| `CropAndResizeGradImage` | float32 | 5.960e-08 | 9.313e-08 | 378 | 99 |
 | `Elu` | float32 | 5.960e-08 | 1.437e-07 | 30 | 0 |
 | `GRUBlockCellGrad` | float32 | 5.960e-08 | 1.527e-07 | 63 | 0 |
 | `HSVToRGB` | float32 | 5.960e-08 | 1.324e-07 | 378 | 0 |
@@ -105,7 +108,6 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `Xlogy` | float32 | 2.980e-08 | 1.194e-07 | 30 | 0 |
 | `MatrixTriangularSolve` | float32 | 1.490e-08 | 2.500e-07 | 15 | 0 |
 | `SigmoidGrad` | float32 | 1.490e-08 | 8.907e-08 | 30 | 0 |
-| `CropAndResizeGradImage` | float32 | 7.451e-09 | 9.313e-08 | 378 | 99 |
 | `RsqrtGrad` | float32 | 7.451e-09 | 9.974e-08 | 30 | 0 |
 | `Prod` | float32 | 9.313e-10 | 7.705e-08 | 6 | 0 |
 | `Abs` | float32 | 0.000e+00 | 0.000e+00 | 30 | 0 |

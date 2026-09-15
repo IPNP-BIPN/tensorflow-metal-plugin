@@ -2434,11 +2434,7 @@ class ShaderLibrary {
     // the wrong pixel with a weight of nearly one. Correct results in the
     // ordinary case are worth more than the optimisation.
     MTLCompileOptions* options = [[MTLCompileOptions alloc] init];
-    if ([options respondsToSelector:@selector(setMathMode:)]) {
-      options.mathMode = MTLMathModeSafe;
-    } else {
-      options.fastMathEnabled = NO;
-    }
+    options.mathMode = MTLMathModeSafe;
     // Metal 3.0, asked for rather than left to the default.
     //
     // Fourteen of these kernels accumulate into an atomic_float, and
