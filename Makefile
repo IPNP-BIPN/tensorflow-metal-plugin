@@ -134,8 +134,12 @@ test-stream: $(BUILD)/stream_executor_test
 	$(BUILD)/stream_executor_test $(OUT)
 
 # Every registered op, through TensorFlow's own dispatch, against the CPU.
+#
+# Writes the per-op error table to docs/op_errors.md as well as printing the
+# worst of it, so that a change in the numerics shows up as a diff rather than
+# as something someone has to have been watching the terminal for.
 sweep: $(OUT)
-	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py
+	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py --report docs/op_errors.md
 
 install: $(OUT)
 	$(PYTHON) -m pip install .
