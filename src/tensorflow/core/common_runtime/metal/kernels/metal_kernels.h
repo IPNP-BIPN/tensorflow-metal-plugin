@@ -200,9 +200,6 @@ void RegisterMetalVolumePatchKernels();
 // ResizeBilinearGrad and ResizeNearestNeighborGrad.
 void RegisterMetalResizeGradKernels();
 
-// BatchNormWithGlobalNormalization and its gradient.
-void RegisterMetalBatchNormGlobalKernels();
-
 // Bincount and DenseBincount.
 void RegisterMetalBincountKernels();
 

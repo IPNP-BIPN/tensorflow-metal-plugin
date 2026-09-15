@@ -4,7 +4,6 @@ Acosh
 Add
 AddN
 AddV2
-AdjustContrast
 AdjustContrastv2
 AdjustHue
 AdjustSaturation
@@ -24,22 +23,9 @@ Atan2
 Atanh
 AvgPool
 AvgPoolGrad
-BatchFFT
-BatchFFT2D
-BatchFFT3D
-BatchIFFT
-BatchIFFT2D
-BatchIFFT3D
 BatchMatMul
 BatchMatMulV2
 BatchMatMulV3
-BatchMatrixBandPart
-BatchMatrixDiag
-BatchMatrixDiagPart
-BatchMatrixSetDiag
-BatchMatrixTriangularSolve
-BatchNormWithGlobalNormalization
-BatchNormWithGlobalNormalizationGrad
 BatchToSpace
 BatchToSpaceND
 Betainc
@@ -68,9 +54,7 @@ Conv2D
 Conv2DBackpropFilter
 Conv2DBackpropInput
 Conv3D
-Conv3DBackpropFilter
 Conv3DBackpropFilterV2
-Conv3DBackpropInput
 Conv3DBackpropInputV2
 Cos
 Cosh
@@ -226,7 +210,6 @@ PopulationCount
 Pow
 Prod
 Qr
-QuantizeAndDequantize
 QuantizeAndDequantizeV2
 QuantizeAndDequantizeV3
 QuantizeAndDequantizeV4
@@ -332,8 +315,6 @@ Tan
 Tanh
 TanhGrad
 Tile
-TileGrad
-TopK
 TopKV2
 Transpose
 TruncatedNormal

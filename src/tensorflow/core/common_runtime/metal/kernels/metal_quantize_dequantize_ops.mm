@@ -648,8 +648,6 @@ void QuantizeDequantizeGrad_ComputeImpl(QuantizeDequantizeOp* op,
     TF_DeleteStatus(status);                                                \
   }
 
-METAL_QD_COMPUTE(QuantizeDequantizeV1_Compute,
-                 QuantizeDequantize_ComputeImpl(op, ctx, -1, -1, -1, status))
 METAL_QD_COMPUTE(QuantizeDequantizeV2_Compute,
                  QuantizeDequantize_ComputeImpl(op, ctx, 1, 2, -1, status))
 METAL_QD_COMPUTE(QuantizeDequantizeV3_Compute,
@@ -690,8 +688,6 @@ void RegisterMetalQuantizeDequantizeKernels() {
   // arithmetic needs on the host, so they are placed there and TensorFlow
   // inserts the transfer. That keeps the supplied-range case free of any
   // synchronisation.
-  Register("QuantizeAndDequantize", &QuantizeDequantizeV1_Compute,
-           "MetalQuantizeAndDequantize", {});
   Register("QuantizeAndDequantizeV2", &QuantizeDequantizeV2_Compute,
            "MetalQuantizeAndDequantizeV2", {"input_min", "input_max"});
   Register("QuantizeAndDequantizeV3", &QuantizeDequantizeV3_Compute,

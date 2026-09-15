@@ -369,94 +369,6 @@ void StridedSliceGrad_ComputeImpl(StridedOp* op, TF_OpKernelContext* ctx,
   RunGraph(stream, *cached, @[ g_data ], @[ o_data ], status);
 }
 
-/*** TILE GRADIENT ***/
-
-// The gradient of Tile sums each repeated block back onto the original
-// extent. Reshaping the tiled axis into [multiple, extent] and reducing the
-// first of the pair does that without any scatter.
-void TileGrad_ComputeImpl(StridedOp* op, TF_OpKernelContext* ctx,
-                          TF_Status* status) {
-  ScopedTensor grad, multiples_t;
-  TF_GetInput(ctx, 0, grad.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-  TF_GetInput(ctx, 1, multiples_t.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-
-  const std::vector<int64_t> grad_shape = ShapeOf(grad.get());
-  const int rank = static_cast<int>(grad_shape.size());
-  std::vector<int64_t> mult;
-  if (!ReadHostVector(multiples_t.get(), &mult, status)) return;
-  if (static_cast<int>(mult.size()) != rank) {
-    TF_SetStatus(status, TF_INVALID_ARGUMENT,
-                 "Metal: TileGrad multiples must match the rank.");
-    return;
-  }
-
-  std::vector<int64_t> out_shape(rank);
-  std::vector<int64_t> split_shape;   // [m0, n0, m1, n1, ...]
-  NSMutableArray<NSNumber*>* reduce_axes = [NSMutableArray array];
-  for (int i = 0; i < rank; ++i) {
-    if (mult[i] <= 0 || grad_shape[i] % mult[i] != 0) {
-      TF_SetStatus(status, TF_INVALID_ARGUMENT,
-                   "Metal: TileGrad multiples must divide the gradient.");
-      return;
-    }
-    out_shape[i] = grad_shape[i] / mult[i];
-    [reduce_axes addObject:@(static_cast<NSInteger>(split_shape.size()))];
-    split_shape.push_back(mult[i]);
-    split_shape.push_back(out_shape[i]);
-  }
-
-  const int64_t count = ElementCount(out_shape);
-  ScopedTensor output;
-  output.reset(TF_AllocateOutput(
-      ctx, 0, op->dtype, out_shape.data(), rank,
-      static_cast<size_t>(count) * TF_DataTypeSize(op->dtype), status));
-  if (TF_GetCode(status) != TF_OK) return;
-  if (count == 0) return;
-
-  SP_Stream stream = StreamForContext(ctx, status);
-  if (TF_GetCode(status) != TF_OK) return;
-  id<MTLDevice> device = DeviceForStream(stream);
-  MPSDataType mps_dtype;
-  if (!MPSTypeFor(op->dtype, &mps_dtype, status)) return;
-
-  std::string key = "TileGrad";
-  AppendShapeToKey(grad_shape, &key);
-  AppendShapeToKey(mult, &key);
-  key.append("/t").append(std::to_string(static_cast<int>(op->dtype)));
-  const std::vector<int64_t> final_shape = out_shape;
-
-  const CachedGraph* cached = LookupOrBuildGraph(
-      key,
-      ^(CachedGraph* out) {
-        MPSGraph* g = out->graph;
-        MPSGraphTensor* dy = [g placeholderWithShape:MPSShape(grad_shape)
-                                            dataType:mps_dtype
-                                                name:nil];
-        MPSGraphTensor* split = [g reshapeTensor:dy
-                                       withShape:MPSShape(split_shape)
-                                            name:nil];
-        MPSGraphTensor* summed = [g reductionSumWithTensor:split
-                                                      axes:reduce_axes
-                                                      name:nil];
-        [out->inputs addObject:dy];
-        [out->outputs addObject:[g reshapeTensor:summed
-                                       withShape:MPSShape(final_shape)
-                                            name:nil]];
-      },
-      status);
-  if (cached == nullptr) return;
-
-  MPSGraphTensorData* g_data =
-      TensorDataForTensor(grad.get(), op->dtype, device, status);
-  if (g_data == nil) return;
-  MPSGraphTensorData* o_data =
-      TensorDataForTensor(output.get(), op->dtype, device, status);
-  if (o_data == nil) return;
-  RunGraph(stream, *cached, @[ g_data ], @[ o_data ], status);
-}
-
 /*** ROLL ***/
 
 // Roll is a concatenation of two slices per axis: the tail moves to the front
@@ -575,7 +487,6 @@ void Roll_ComputeImpl(StridedOp* op, TF_OpKernelContext* ctx,
 
 METAL_COMPUTE(StridedSlice_Compute, StridedSlice_ComputeImpl)
 METAL_COMPUTE(StridedSliceGrad_Compute, StridedSliceGrad_ComputeImpl)
-METAL_COMPUTE(TileGrad_Compute, TileGrad_ComputeImpl)
 METAL_COMPUTE(Roll_Compute, Roll_ComputeImpl)
 
 #undef METAL_COMPUTE
@@ -623,12 +534,6 @@ void RegisterMetalStridedKernels() {
       Register("StridedSliceGrad", &StridedSliceGrad_Compute, kDTypes[i],
                "MetalStridedSliceGrad" + s + is,
                {"shape", "begin", "end", "strides"}, "Index", kIndexTypes[j]);
-      // TileGrad has T and nothing else: no Tmultiples to constrain, and
-      // constraining one registered a kernel that could never match.
-      if (j == 0) {
-        Register("TileGrad", &TileGrad_Compute, kDTypes[i],
-                 "MetalTileGrad" + s, {"multiples"});
-      }
       Register("Roll", &Roll_Compute, kDTypes[i], "MetalRoll" + s + is,
                {"shift", "axis"}, "Tshift", kIndexTypes[j]);
     }

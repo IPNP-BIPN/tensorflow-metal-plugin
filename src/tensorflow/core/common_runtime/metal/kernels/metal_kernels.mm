@@ -32,7 +32,6 @@ void RegisterAllMetalKernels() {
   RegisterMetalDepthwiseKernels();
   RegisterMetalDilationKernels();
   RegisterMetalBincountKernels();
-  RegisterMetalBatchNormGlobalKernels();
   RegisterMetalResizeGradKernels();
   RegisterMetalVolumePatchKernels();
   RegisterMetalSparseKernels();

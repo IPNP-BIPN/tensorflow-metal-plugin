@@ -348,27 +348,6 @@ def _build():
   return recipes
 
 
-# Ops TensorFlow itself will not run any more, whatever the device: their
-# kernels raise "not available in GraphDef version ... It has been removed in
-# version ...". They are registered here because the CUDA build registers
-# them, and a registration is all either build can offer.
-REMOVED_FROM_GRAPHDEF = {
-    "BatchFFT", "BatchFFT2D", "BatchFFT3D", "BatchIFFT", "BatchIFFT2D",
-    "BatchIFFT3D", "BatchMatrixBandPart", "BatchMatrixDiag",
-    "BatchMatrixDiagPart", "BatchMatrixSetDiag", "BatchMatrixTriangularSolve",
-    "QuantizeAndDequantize", "AdjustContrast",
-    "BatchNormWithGlobalNormalization", "BatchNormWithGlobalNormalizationGrad",
-    "Conv3DBackpropFilter", "Conv3DBackpropInput",
-    # These two announce themselves differently, complaining that a kernel
-    # constrains an attribute the node lacks, which is true and is not the
-    # reason they cannot run: TopK is deprecated from GraphDef version 7 and
-    # TileGrad from version 3, and TensorFlow's own CPU registrations for them
-    # were left constraining index_type and Tmultiples, attributes their op
-    # defs do not have. Deprecated is the reason; the constraint is what the
-    # error happens to mention first.
-    "TopK", "TileGrad",
-}
-
 # Ops that need entry points a released TensorFlow does not export, so the
 # plugin deliberately leaves them to the host. In an in-tree build they are
 # registered and work; out of tree there is nothing to test.

@@ -643,13 +643,6 @@ void RegisterMetalFftKernels() {
   Register("IFFT", &Ifft1_Compute, "MetalIFFT", false);
   Register("IFFT2D", &Ifft2_Compute, "MetalIFFT2D", false);
   Register("IFFT3D", &Ifft3_Compute, "MetalIFFT3D", false);
-  // The deprecated spellings are the same ops under their old names.
-  Register("BatchFFT", &Fft1_Compute, "MetalBatchFFT", false);
-  Register("BatchFFT2D", &Fft2_Compute, "MetalBatchFFT2D", false);
-  Register("BatchFFT3D", &Fft3_Compute, "MetalBatchFFT3D", false);
-  Register("BatchIFFT", &Ifft1_Compute, "MetalBatchIFFT", false);
-  Register("BatchIFFT2D", &Ifft2_Compute, "MetalBatchIFFT2D", false);
-  Register("BatchIFFT3D", &Ifft3_Compute, "MetalBatchIFFT3D", false);
   Register("RFFT", &Rfft1_Compute, "MetalRFFT", true);
   Register("RFFT2D", &Rfft2_Compute, "MetalRFFT2D", true);
   Register("RFFT3D", &Rfft3_Compute, "MetalRFFT3D", true);

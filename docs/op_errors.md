@@ -17,10 +17,10 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `DepthwiseConv2dNativeBackpropFilter` | float32 | 3.052e-05 | 1.054e-04 | 108 | 0 |
 | `DepthwiseConv2dNativeBackpropInput` | float32 | 3.052e-05 | 3.416e-06 | 378 | 0 |
 | `Conv2DBackpropInput` | float32 | 1.526e-05 | 1.082e-04 | 378 | 0 |
-| `Dilation2DBackpropFilter` | float32 | 1.526e-05 | 2.518e-07 | 12 | 0 |
+| `Dilation2DBackpropFilter` | float32 | 1.526e-05 | 1.679e-07 | 12 | 0 |
+| `CropAndResizeGradBoxes` | float32 | 7.629e-06 | 3.344e-07 | 8 | 0 |
 | `FFT3D` | complex64 | 5.395e-06 | 1.031e-06 | 256 | 0 |
 | `RFFT3D` | complex64 | 3.932e-06 | 1.988e-06 | 160 | 0 |
-| `CropAndResizeGradBoxes` | float32 | 3.815e-06 | 1.672e-07 | 8 | 0 |
 | `BiasAddGrad` | float32 | 2.861e-06 | 3.841e-07 | 3 | 0 |
 | `Conv2D` | float32 | 2.861e-06 | 5.690e-06 | 576 | 0 |
 | `Conv3D` | float32 | 2.861e-06 | 3.333e-04 | 960 | 0 |
@@ -86,7 +86,6 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `Asinh` | float32 | 5.960e-08 | 1.587e-07 | 30 | 0 |
 | `Atan2` | float32 | 5.960e-08 | 7.589e-08 | 30 | 0 |
 | `Cos` | float32 | 5.960e-08 | 7.981e-08 | 30 | 0 |
-| `CropAndResizeGradImage` | float32 | 5.960e-08 | 9.313e-08 | 378 | 99 |
 | `Elu` | float32 | 5.960e-08 | 1.437e-07 | 30 | 0 |
 | `GRUBlockCellGrad` | float32 | 5.960e-08 | 1.527e-07 | 63 | 0 |
 | `HSVToRGB` | float32 | 5.960e-08 | 1.324e-07 | 378 | 0 |
@@ -106,6 +105,7 @@ Relative error ignores elements whose CPU value is below 1e-06, because dividing
 | `Xlogy` | float32 | 2.980e-08 | 1.194e-07 | 30 | 0 |
 | `MatrixTriangularSolve` | float32 | 1.490e-08 | 2.500e-07 | 15 | 0 |
 | `SigmoidGrad` | float32 | 1.490e-08 | 8.907e-08 | 30 | 0 |
+| `CropAndResizeGradImage` | float32 | 7.451e-09 | 9.313e-08 | 378 | 99 |
 | `RsqrtGrad` | float32 | 7.451e-09 | 9.974e-08 | 30 | 0 |
 | `Prod` | float32 | 9.313e-10 | 7.705e-08 | 6 | 0 |
 | `Abs` | float32 | 0.000e+00 | 0.000e+00 | 30 | 0 |

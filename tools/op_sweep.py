@@ -49,7 +49,6 @@ ROOT = os.path.dirname(HERE)
 MATCH, MISMATCH, GPU_ERROR, UNEXERCISED, NO_RECIPE = (
     "match", "mismatch", "gpu-error", "unexercised", "no-recipe")
 # Two kinds of "cannot be exercised" that are not gaps in the backend.
-REMOVED = "removed-from-tensorflow"
 OUT_OF_TREE = "needs-unexported-api"
 
 
@@ -799,10 +798,6 @@ def main():
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
-    if name in recipes.REMOVED_FROM_GRAPHDEF:
-      results[name] = REMOVED
-      details[name] = "TensorFlow removed this op; no device can run it"
-      continue
     if name in recipes.NEEDS_UNEXPORTED_C_API:
       results[name] = OUT_OF_TREE
       details[name] = ("needs kernel C API entry points a released "
@@ -923,7 +918,7 @@ def main():
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
-  order = [MISMATCH, GPU_ERROR, MATCH, REMOVED, OUT_OF_TREE, UNEXERCISED,
+  order = [MISMATCH, GPU_ERROR, MATCH, OUT_OF_TREE, UNEXERCISED,
            NO_RECIPE]
   counts = {k: 0 for k in order}
   for value in results.values():

@@ -622,8 +622,6 @@ void RegisterMetalLinalgKernels() {
   // solve would lose more precision than it would save time.
   Register("MatrixTriangularSolve", &TriangularSolve_Compute,
            "MetalMatrixTriangularSolve");
-  Register("BatchMatrixTriangularSolve", &TriangularSolve_Compute,
-           "MetalBatchMatrixTriangularSolve");
   Register("Qr", &Qr_Compute, "MetalQr");
   Register("SelfAdjointEigV2", &SelfAdjointEig_Compute,
            "MetalSelfAdjointEigV2");
