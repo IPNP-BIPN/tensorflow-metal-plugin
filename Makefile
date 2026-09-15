@@ -95,7 +95,7 @@ LDFLAGS := -dynamiclib $(FRAMEWORKS) \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test test-stream test-load sweep install
+.PHONY: all clean test test-stream test-load sweep kernels install
 
 all: $(OUT)
 
@@ -140,6 +140,11 @@ test-stream: $(BUILD)/stream_executor_test
 # as something someone has to have been watching the terminal for.
 sweep: $(OUT)
 	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py --report docs/op_errors.md
+
+# Regenerates the table of what the plugin registers, by asking TensorFlow
+# rather than by anyone remembering to update it.
+kernels: $(OUT)
+	$(PYTHON) tools/dump_kernels.py
 
 install: $(OUT)
 	$(PYTHON) -m pip install .

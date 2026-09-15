@@ -1,62 +1,45 @@
 # Metal PluggableDevice backend
 
-GPU support for Apple silicon Macs, built into TensorFlow rather than
-installed as a separate plugin.
+How the backend works. For installing and using it, see the
+[README](../README.md); for what it registers, see
+[kernels.md](kernels.md).
 
 ## Status
 
-Experimental, and complete in the sense that matters for portability: every op
-the CUDA build registers for a GPU is registered here too, apart from the
-TensorRT ops, which are gated behind `if_tensorrt` and are not part of a macOS
-build at all.
-
-Most of those ops run as Metal kernels. The rest are covered the way
-TensorFlow already covers them for any device without a kernel of its own,
-either by a `DEVICE_DEFAULT` registration or by an unguarded `DEVICE_GPU` one.
-A few are registered with their data pinned to host memory, which is correct
-but not fast; those are called out under [Limitations](#limitations).
+Working. 323 ops are registered and every one of them has been run on a real
+GPU and compared against the CPU kernel for the same op; `make sweep` is that
+comparison and [op_errors.md](op_errors.md) is how far apart the answers were.
 
 Registering an op is not the same as running it well. What has been measured
 end to end is a convolutional classifier: convolutions and their gradients,
 pooling, activations, softmax cross entropy, reductions, weight initialisation
-and the Adam and SGD updates.
+and the SGD update. The Adam update runs on the host on a released
+TensorFlow, for the reason under [Limitations](#limitations).
+
+Ops with no kernel here are not an error. TensorFlow places them on the CPU
+through its ordinary soft placement, and a model that uses one runs, slower,
+rather than failing.
 
 ## Building
 
 ```
-./configure    # answer yes to "Metal GPU"
-bazel build --config=metal //tensorflow/tools/pip_package:wheel
+make
+make check-symbols
+make test
 ```
 
-`--config=metal` implies `--config=macos_arm64` and sets
-`--define=with_metal_support=true`. Without it nothing here is compiled and no
-dependency on it is added, on any platform.
-
-Check it worked:
-
-```python
-import tensorflow as tf
-print(tf.config.list_physical_devices("GPU"))
-```
-
-Set `TF_DISABLE_METAL=1` to keep the backend out of the process without
-rebuilding.
-
-## Why this exists
-
-Apple's `tensorflow-metal` plugin was the only GPU path for TensorFlow on Mac.
-Its last release, 1.2.0, is from January 2025, and it publishes wheels for
-CPython 3.9 through 3.12 only, so there is no Metal plugin at all for the
-Python 3.13 that current TensorFlow supports.
+See the [README](../README.md#build) for what that needs and for installing
+the result.
 
 ## Design
 
-The backend is written as a StreamExecutor C API plugin, the same interface an
-out-of-tree plugin implements, and is registered in-process rather than
-`dlopen`'ed: `metal_plugin_registrar.cc` hands a `PluggableDeviceInit_Api` to
-`RegisterPluggableDevicePlugin`. That reuses the whole of
-`tensorflow/core/common_runtime/pluggable_device` unchanged, and keeps the code
-extractable to a separate repository if it ever needs to move.
+The backend is a StreamExecutor C API plugin in a shared object that
+TensorFlow `dlopen`s from `site-packages/tensorflow-plugins`, and
+`src/plugin_init.cc` exports the four symbols it looks up by name:
+`SE_InitPlugin`, `TF_InitKernel`, and the optional `TF_InitProfiler` and
+`TF_InitGraph`. That reuses the whole of
+`tensorflow/core/common_runtime/pluggable_device` unchanged, with no patch to
+TensorFlow.
 
 ### Device type
 
@@ -133,147 +116,16 @@ differently rather than fail.
 
 ## Supported ops
 
-| Op | dtypes |
-| --- | --- |
-| `Conv2D`, `Conv2DBackpropInput`, `Conv2DBackpropFilter` | float32, float16 |
-| `Conv` | float32, float16 |
-| `_FusedConv2D`, `_FusedMatMul` | float32, float16 |
-| `_FusedBatchNormEx`, `_FusedBatchNormGradEx` | float32, float16 |
-| `CTCLoss`, `CTCLossV2` | float32 |
-| `Conv3D`, `Conv3DBackpropInputV2`, `Conv3DBackpropFilterV2` | float32, float16 |
-| `Conv3DBackpropInput`, `Conv3DBackpropFilter` | float32, float16 |
-| `MaxPool`, `MaxPoolGrad`, `AvgPool`, `AvgPoolGrad` | float32, float16 |
-| `MaxPoolV2`, `MaxPoolGradV2` | float32, float16 |
-| `MaxPoolWithArgmax`, `MaxPoolGradWithArgmax`, `MaxPoolGradGradWithArgmax` | float32 |
-| `MaxPoolGradGrad`, `MaxPoolGradGradV2` | float32 |
-| `DepthwiseConv2dNative`, `DepthwiseConv2dNativeBackpropInput`, `DepthwiseConv2dNativeBackpropFilter` | float32, float16 |
-| `BatchNormWithGlobalNormalization`, `BatchNormWithGlobalNormalizationGrad` | float32 |
-| `Bincount`, `DenseBincount` | float32, int32 |
-| `FFT`, `FFT2D`, `FFT3D`, `IFFT`, `IFFT2D`, `IFFT3D` | complex64 |
-| `BatchFFT`, `BatchFFT2D`, `BatchFFT3D`, `BatchIFFT`, `BatchIFFT2D`, `BatchIFFT3D` | complex64 |
-| `RFFT`, `RFFT2D`, `RFFT3D`, `IRFFT`, `IRFFT2D`, `IRFFT3D` | float32 and complex64 |
-| `FFTND`, `IFFTND`, `RFFTND`, `IRFFTND` | complex64, and float32 for the real pair |
-| `SparseToDense`, `SparseTensorDenseMatMul` | float32 |
-| `SparseBincount`, `RaggedBincount` | float32, int32 |
-| `Betainc` | float32 |
-| `Snapshot` | float32, float16, int32, int64 |
-| `Assign`, `AssignAdd`, `AssignSub` | float32, float16, int32, int64 |
-| `DebugNumericSummaryV2` | float32 input and output |
-| `_TensorToHashBucketFast` | int8, int16, int32, int64 |
-| `NcclAllReduce`, `NcclBroadcast`, `NcclReduce` | float32, float16, float64, int32, int64 |
-| `_NcclBroadcastSend`, `_NcclBroadcastRecv`, `_NcclReduceSend`, `_NcclReduceRecv` | float32, float16, float64, int32, int64 |
-| `Empty` | float32, int32 |
-| `SparseReshape`, `SparseReorder`, `SparseSlice`, `SparseSliceGrad` | float32 |
-| `SparseSplit`, `SparseConcat`, `SparseFillEmptyRows`, `SparseFillEmptyRowsGrad` | float32 |
-| `RaggedFillEmptyRows`, `RaggedFillEmptyRowsGrad` | float32 |
-| `SparseSegmentSum`, `SparseSegmentMean`, `SparseSegmentSqrtN` | float32 |
-| `SparseSegmentSumWithNumSegments`, `SparseSegmentMeanWithNumSegments`, `SparseSegmentSqrtNWithNumSegments` | float32 |
-| `SparseSegmentSumGrad`, `SparseSegmentMeanGrad`, `SparseSegmentSqrtNGrad` | float32 |
-| `SparseSegmentSumGradV2`, `SparseSegmentMeanGradV2`, `SparseSegmentSqrtNGradV2` | float32 |
-| `Unique`, `UniqueWithCounts` | float32, int32, int64 |
-| `DynamicPartition`, `DynamicStitch`, `ParallelDynamicStitch` | float32, int32, int64 |
-| `CropAndResize`, `CropAndResizeGradImage`, `CropAndResizeGradBoxes` | float32 |
-| `ImageProjectiveTransformV2`, `ImageProjectiveTransformV3` | float32 |
-| `ExtractVolumePatches` | float32 |
-| `LSTMBlockCell`, `LSTMBlockCellGrad` | float32 |
-| `BlockLSTM`, `BlockLSTMGrad`, `BlockLSTMV2`, `BlockLSTMGradV2` | float32 |
-| `GRUBlockCell`, `GRUBlockCellGrad` | float32 |
-| `Dilation2D` | float32, float16 |
-| `Dilation2DBackpropInput`, `Dilation2DBackpropFilter` | float32 |
-| `FusedBatchNorm`, `FusedBatchNormV2`, `FusedBatchNormV3` | float32, float16 |
-| `FusedBatchNormGrad`, `FusedBatchNormGradV2`, `FusedBatchNormGradV3` | float32, float16 |
-| `Relu`, `ReluGrad`, `LeakyRelu`, `LeakyReluGrad` | float32, float16 |
-| `Relu6`, `Relu6Grad`, `Softsign`, `SoftsignGrad`, `LogSoftmax` | float32, float16 |
-| `Elu`, `EluGrad`, `Selu`, `SeluGrad`, `Softplus`, `SoftplusGrad` | float32, float16 |
-| `BatchMatMul`, `BatchMatMulV2`, `BatchMatMulV3` | float32, float16 |
-| `BiasAdd`, `BiasAddGrad` | float32, float16 |
-| `Softmax` | float32, float16 |
-| `SoftmaxCrossEntropyWithLogits` | float32, float16 |
-| `SparseSoftmaxCrossEntropyWithLogits` | float32, float16; int32 or int64 labels |
-| `MatMul` | float32, float16 |
-| `Add`, `AddV2`, `Sub`, `Mul`, `Div`, `RealDiv` | float32, float16 |
-| `Maximum`, `Minimum`, `Pow`, `SquaredDifference` | float32, float16 |
-| `Neg`, `Abs`, `Square`, `Sqrt`, `Rsqrt`, `Reciprocal` | float32, float16 |
-| `Floor`, `Ceil`, `Round`, `Rint`, `Sign`, `Erf` | float32, float16 |
-| `Log1p`, `Expm1` | float32, float16 |
-| `FloorDiv`, `FloorMod`, `Mod` | float32, float16 |
-| `Exp`, `Log`, `Tanh`, `Sigmoid` | float32, float16 |
-| `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan` | float32, float16 |
-| `Sinh`, `Cosh`, `Asinh`, `Acosh`, `Atanh`, `Atan2` | float32, float16 |
-| `Xdivy`, `Xlogy` | float32, float16 |
-| `TanhGrad`, `SigmoidGrad`, `SqrtGrad`, `RsqrtGrad` | float32, float16 |
-| `AddN`, `Transpose`, `Concat`, `ConcatV2`, `Tile` | float32, float16 |
-| `Slice`, `Pad`, `PadV2`, `MirrorPad`, `MirrorPadGrad` | float32, float16 |
-| `GatherV2`, `OneHot`, `TopKV2` | float32, float16 |
-| `ResourceGather`, `ResourceScatterUpdate` | float32, float16 |
-| `GatherNd`, `ResourceGatherNd` | float32, float16 |
-| `TopK`, `LowerBound`, `UpperBound`, `HistogramFixedWidth` | float32, float16 |
-| `ApproxTopK` | float32, float16 |
-| `MatrixTriangularSolve`, `BatchMatrixTriangularSolve` | float32 |
-| `Lu` | float32, with int32 or int64 permutation |
-| `Qr`, `SelfAdjointEigV2` | float32 |
-| `NonMaxSuppressionV2`, `NonMaxSuppressionV3`, `NonMaxSuppressionV4` | float32 |
-| `GenerateBoundingBoxProposals` | float32 |
-| `_ParallelConcatStart`, `_ParallelConcatUpdate` | float32, float16, int32, int64 |
-| `ParallelConcat` | float32, float16, int32, int64; fails if reached, as on every device |
-| `Cumsum`, `Cumprod`, `ClipByValue` | float32, float16 |
-| `FakeQuantWithMinMaxArgs`, `FakeQuantWithMinMaxArgsGradient` | float32 |
-| `FakeQuantWithMinMaxVars`, `FakeQuantWithMinMaxVarsGradient` | float32 |
-| `FakeQuantWithMinMaxVarsPerChannel`, `FakeQuantWithMinMaxVarsPerChannelGradient` | float32 |
-| `QuantizeAndDequantize`, `QuantizeAndDequantizeV2`, `QuantizeAndDequantizeV3` | float32 |
-| `QuantizeAndDequantizeV4`, `QuantizeAndDequantizeV4Grad` | float32 |
-| `MatrixBandPart`, `MatrixDiag`, `MatrixDiagPart`, `MatrixSetDiag` | float32, float16 |
-| `MatrixDiagV2`, `MatrixDiagV3`, `MatrixDiagPartV2`, `MatrixDiagPartV3` | float32, float16; main diagonal only |
-| `MatrixSetDiagV2`, `MatrixSetDiagV3` | float32, float16; main diagonal only |
-| `BatchMatrixBandPart`, `BatchMatrixDiag`, `BatchMatrixDiagPart`, `BatchMatrixSetDiag` | float32, float16 |
-| `BiasAddV1`, `ConjugateTranspose`, `Bucketize` | float32, float16 |
-| `Conj`, `Cross` | float32, float16 |
-| `SpaceToDepth`, `DepthToSpace`, `L2Loss` | float32, float16 |
-| `SpaceToBatchND`, `BatchToSpaceND` | float32, float16 |
-| `SpaceToBatch`, `BatchToSpace` | float32, float16 |
-| `ReverseSequence` | float32, float16 |
-| `Diag`, `DiagPart`, `LinSpace` | float32, float16 |
-| `ResizeBilinear`, `ResizeNearestNeighbor` | float32, float16 |
-| `ResizeBilinearGrad`, `ResizeNearestNeighborGrad` | float32 |
-| `RGBToHSV`, `HSVToRGB`, `AdjustContrastv2` | float32 |
-| `AdjustHue`, `AdjustSaturation` | float32 |
-| `ReverseV2`, `Split`, `SplitV` | float32, float16 |
-| `Reverse`, `CheckNumerics`, `CheckNumericsV2` | float32, float16 |
-| `ExtractImagePatches` | float32, float16 |
-| `LRN`, `LRNGrad` | float32 |
-| `PopulationCount` | int32, int64 |
-| `CumulativeLogsumexp` | float32, float16 |
-| `AdjustContrast` | float32 |
-| `StridedSlice`, `StridedSliceGrad`, `TileGrad`, `Roll` | float32, float16 |
-| `Equal`, `NotEqual`, `Less`, `LessEqual`, `Greater`, `GreaterEqual` | float32, float16, int32, int64 |
-| `ApproximateEqual` | float32, float16 |
-| `LogicalAnd`, `LogicalOr`, `LogicalNot` | bool |
-| `Select`, `SelectV2` | float32, float16, int32, int64 |
-| `ArgMax`, `ArgMin` | float32, float16; int32 or int64 output |
-| `InTopK`, `InTopKV2` | float32 predictions; int32 or int64 targets |
-| `Sum`, `Mean`, `Max`, `Min`, `Prod` | float32, float16 |
-| `EuclideanNorm` | float32, float16 |
-| `Any`, `All` | bool |
-| `Fill`, `ZerosLike`, `OnesLike` | float32, float16 |
-| `RandomUniform`, `RandomStandardNormal`, `TruncatedNormal` | float32 |
-| `ParameterizedTruncatedNormal`, `StatelessParameterizedTruncatedNormal` | float32 |
-| `Multinomial`, `StatelessMultinomial` | float32 logits, int32 or int64 output |
-| `RandomGamma`, `StatelessRandomGammaV2`, `StatelessRandomGammaV3` | float32 |
-| `RandomUniformInt` | int32 output |
-| `ResourceApplyGradientDescent`, `ResourceApplyAdam` | float32 |
-| `ResourceApplyMomentum`, `ResourceApplyKerasMomentum`, `ResourceApplyRMSProp` | float32 |
-| `Cast` | float32, float16, bfloat16, int32, int64 pairs |
-| `Identity` | float32, float16, int32, int64, bool |
-| `CudnnRNN`, `CudnnRNNV2`, `CudnnRNNV3` | float32, float16 |
-| `CudnnRNNBackprop`, `CudnnRNNBackpropV2`, `CudnnRNNBackpropV3` | float32, float16 |
-| `CudnnRNNParamsSize` | float32, float16 |
-| `CudnnRNNParamsToCanonical`, `CudnnRNNParamsToCanonicalV2` | float32, float16 |
-| `CudnnRNNCanonicalToParams`, `CudnnRNNCanonicalToParamsV2` | float32, float16 |
+The table is generated from the kernel registry rather than written by hand,
+because a hand-written one is a claim about the kernels rather than a
+description of them, and this one had drifted: it still named ops that had
+been deleted. See [kernels.md](kernels.md), refreshed with `make kernels`.
 
-Resource variables (`VarHandleOp`, `ReadVariableOp`, `AssignVariableOp` and the
-rest), `Reshape`, `Const`, `Shape`, `StridedSlice` and `Pack` need no kernel
-here: TensorFlow registers them for `DEVICE_DEFAULT`, which any device type
-inherits when it has no kernel of its own.
+Resource variables (`VarHandleOp`, `ReadVariableOp`, `AssignVariableOp` and
+the rest), `Reshape`, `Const`, `Shape`, `StridedSlice`, `Pack`, `Unpack`,
+`ExpandDims` and `Squeeze` need no kernel here: TensorFlow registers them for
+`DEVICE_DEFAULT`, which any device type inherits when it has no kernel of its
+own. Registering them again here would add nothing.
 
 ## Limitations
 
@@ -328,9 +180,17 @@ inherits when it has no kernel of its own.
 
 ## Ops the CUDA build registers and this one does not
 
-The list is the five TensorRT ops, `TRTEngineOp` and the four that manage its
-resource. They are gated behind `if_tensorrt`, TensorRT does not build on
-macOS, and the ops therefore do not exist in this build to be registered for.
+The five TensorRT ops, `TRTEngineOp` and the four that manage its resource.
+They are gated behind `if_tensorrt`, TensorRT does not build on macOS, and the
+ops therefore do not exist to be registered for.
+
+Nineteen more were registered here until they were removed: TensorFlow
+deprecated them in their own op defs, so no graph a current TensorFlow builds
+can contain one and no device can run them. They were the six `BatchFFT`
+spellings, the four `BatchMatrix` ones, `BatchMatrixTriangularSolve`,
+`QuantizeAndDequantize`, `AdjustContrast`, the two
+`BatchNormWithGlobalNormalization` ops, the two v1 `Conv3D` gradients, `TopK`
+and `TileGrad`.
 
 Everything else CUDA registers for a GPU is registered here, by one of four
 routes, and it is worth knowing which because they are not equally fast:
@@ -368,7 +228,9 @@ and say so rather than pretending otherwise:
 | `metal_platform.{h,mm}` | `SP_Platform`, device discovery, plugin entry point |
 | `metal_profiler.{h,mm}` | The pluggable profiler: op labels, GPU timings, XSpace |
 | `metal_graph.{h,mm}` | The graph optimizer: bias and activation fusion |
-| `metal_plugin_registrar.cc` | Static registration with core |
+| `../plugin_init.cc` | The four exported entry points |
 | `kernels/metal_mps_graph.{h,mm}` | MPSGraph bridge, graph cache, zero-copy tensor aliasing |
 | `kernels/metal_shader_library.{h,mm}` | Embedded Metal source and pipeline cache |
 | `kernels/metal_*_ops.mm` | Op kernels, grouped by family |
+
+Everything under `src/tensorflow/core/common_runtime/metal/`.
