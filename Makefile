@@ -95,7 +95,7 @@ LDFLAGS := -dynamiclib $(FRAMEWORKS) \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test test-stream sweep install
+.PHONY: all clean test test-stream test-load sweep install
 
 all: $(OUT)
 
@@ -114,6 +114,12 @@ check-symbols: $(OUT)
 
 test: $(OUT) test-stream
 	$(PYTHON) tests/run_tests.py
+
+# Separate from `test`, because it rebuilds the library twice to produce one
+# compiled against a different TensorFlow, and that is minutes rather than
+# seconds. Run it when anything about loading or the version pin changes.
+test-load: $(OUT)
+	$(PYTHON) tests/load_modes_test.py
 
 # The StreamExecutor C API driven directly, without TensorFlow. Reaches what
 # no op can: memset32 with a pattern that is not four equal bytes has one

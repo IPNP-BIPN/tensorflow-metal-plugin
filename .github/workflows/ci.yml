@@ -64,3 +64,8 @@ jobs:
 
       - name: Run on-device tests
         run: make PYTHON=$(which python) test
+
+      - name: Check how the plugin declines to load
+        # Rebuilds twice, so it is last: everything above has already run
+        # against the library the pin describes.
+        run: make PYTHON=$(which python) test-load
