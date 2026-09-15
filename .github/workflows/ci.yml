@@ -1,14 +1,12 @@
 name: Metal plugin
 
-# Kept alongside the plugin rather than in .github/workflows, because
-# TensorFlow's CI has no Apple silicon GPU runner to run it on. Copy it there,
-# or run the same three steps by hand, on a machine that has one:
+# Needs an Apple silicon runner with a GPU, which is the thing an out-of-tree
+# plugin can test and TensorFlow's own CI cannot: the Metal shaders compiled by
+# the Metal runtime, and the kernels executed on a real device.
+#
+# The same three steps by hand:
 #
 #   make -j4 && make check-symbols && make test
-#
-# That is the thing an out-of-tree plugin can offer that TensorFlow's own CI
-# cannot: the Metal shaders compiled by the Metal runtime, and the kernels
-# executed on a real GPU.
 on:
   push:
     branches: [main]
@@ -36,14 +34,18 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install TensorFlow
+        # The pinned release, not the newest one. A floating install would mean
+        # CI never actually exercises the version the package declares, and the
+        # first report of a break would come from a user.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "tensorflow>=2.16" numpy pytest
+          python -m pip install "tensorflow==$(cat TF_SUPPORTED_VERSION)" numpy pytest
 
       - name: Report what we are building against
         run: |
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
+          echo "pinned to $(cat TF_SUPPORTED_VERSION)"
           python -c "import tensorflow as tf; print(tf.__version__); print(tf.sysconfig.get_include()); print(tf.sysconfig.get_lib())"
           sw_vers
           system_profiler SPDisplaysDataType | head -20

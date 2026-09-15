@@ -35,6 +35,13 @@ from setuptools.dist import Distribution
 
 HERE = Path(__file__).resolve().parent
 
+# The single source of truth for which TensorFlow this plugin supports, shared
+# with the Makefile and with CI. A PluggableDevice is matched to its host by
+# struct_size rather than by a version negotiation it could fail gracefully,
+# so the supported range is one minor release and is declared as one.
+TF_VERSION = (HERE / "TF_SUPPORTED_VERSION").read_text().strip()
+TF_MAJOR_MINOR = ".".join(TF_VERSION.split(".")[:2])
+
 
 def tensorflow_paths():
   """Where TensorFlow's headers and libraries are.
@@ -95,7 +102,10 @@ setup(
     long_description_content_type="text/markdown",
     license="Apache-2.0",
     python_requires=">=3.10",
-    install_requires=["tensorflow>=2.16"],
+    # Narrow on purpose. The plugin is compiled against the installed
+    # TensorFlow and refuses at load to run against a different minor
+    # release, so a wider range here would only move the failure later.
+    install_requires=[f"tensorflow=={TF_MAJOR_MINOR}.*"],
     # tensorflow-plugins is the directory TensorFlow scans at import, so that
     # is where the shared object has to land. Declaring it as a package is
     # what makes the wheel carry it; data_files would not, since those install

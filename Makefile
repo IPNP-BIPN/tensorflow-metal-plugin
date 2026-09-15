@@ -15,9 +15,21 @@ TF_INCLUDE ?= $(shell $(PYTHON) -c "import tensorflow as tf; print(tf.sysconfig.
 TF_LIB ?= $(shell $(PYTHON) -c "import tensorflow as tf; print(tf.sysconfig.get_lib())" 2>/dev/null)
 
 ifeq ($(strip $(TF_INCLUDE)),)
-$(error TensorFlow was not found. Install it first, or pass TF_INCLUDE and \
-TF_LIB explicitly)
+$(error TensorFlow was not found by $(PYTHON). Install it there, point PYTHON \
+at an interpreter that has it, or pass TF_INCLUDE and TF_LIB explicitly. Note \
+that make resolves a bare `python3` through /bin/sh, which need not be the \
+one an interactive shell gives you)
 endif
+# The one TensorFlow release this plugin is built and tested against.
+#
+# Kept in a file rather than repeated here, in setup.py and in CI, because
+# three copies of a pinned version is three chances for them to disagree, and
+# the PluggableDevice C API gives no second chance: the structs crossing the
+# boundary are matched by struct_size, so a plugin compiled against different
+# headers than the TensorFlow loading it fails in ways that say nothing about
+# the cause. The plugin checks this at load, see plugin_init.cc.
+TF_SUPPORTED_VERSION := $(shell cat TF_SUPPORTED_VERSION)
+
 SDK := $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 
 BUILD := build
@@ -62,7 +74,8 @@ CXXFLAGS := -std=c++17 -O2 -fPIC -isysroot $(SDK) $(COMPAT) -MMD -MP \
             -Isrc -I$(TF_INCLUDE) \
             -I$(TF_INCLUDE)/external/farmhash_archive/src \
             -DNDEBUG -DTF_METAL_OUT_OF_TREE \
-            -DTF_CAPI_WEAK
+            -DTF_CAPI_WEAK \
+            -DTF_METAL_SUPPORTED_TF_VERSION=\"$(TF_SUPPORTED_VERSION)\"
 
 FRAMEWORKS := -framework Metal -framework MetalPerformanceShaders \
               -framework MetalPerformanceShadersGraph -framework Foundation
@@ -91,7 +104,7 @@ $(OUT): $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $@
 	@echo "built $@"
 
-$(BUILD)/%.o: src/% $(STAMP)
+$(BUILD)/%.o: src/% $(STAMP) TF_SUPPORTED_VERSION
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
