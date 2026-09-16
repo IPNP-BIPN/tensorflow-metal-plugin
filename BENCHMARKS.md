@@ -10,19 +10,21 @@ Both devices run the identical graph on the identical data in one process, timed
 
 **A case marked (spans 1.0) has not been shown to be faster on either device.** Its runs landed on both sides. The median alone would hide that.
 
+**The range does not capture the variance between sessions, which is larger.** Two tables measured by this script on the same machine against the same TensorFlow, with no change to the kernels in between, disagreed by roughly a factor of two on most cases: MatMul 2048x2048 at 6.43x in one and 3.55x in the other, with the CPU time itself differing four-fold. Whichever was the quieter machine, neither range said so. Read a ratio here as a statement about this machine while this table was being written, and re-measure rather than quote.
+
 Every measurement waits for the device before stopping the clock: a Metal command buffer is asynchronous, and an unwaited timing measures how fast work can be enqueued.
 
 | Case | GPU ms | CPU ms | speedup | across runs |
 | --- | ---: | ---: | ---: | ---: |
-| MatMul 1024x1024 | 1.75 | 14.31 | **8.17x** | 7.58..9.05 |
-| MatMul 2048x2048 | 7.52 | 48.05 | **6.43x** | 5.44..6.75 |
-| Conv2D batch 64 | 7.02 | 26.22 | **3.66x** | 3.10..3.69 |
-| Conv2D batch 16 | 2.09 | 6.68 | **3.27x** | 2.02..5.54 |
-| MatMul 512x512 | 0.83 | 2.44 | **3.14x** | 2.77..4.16 |
-| CNN train step, SGD, batch 128 | 34.46 | 85.63 | **2.44x** | 2.40..2.62 |
-| CNN forward batch 128 | 10.85 | 26.54 | **2.37x** | 2.27..2.58 |
-| ReduceSum 4096x4096 | 0.99 | 1.82 | 1.98x | 0.52..2.25 (spans 1.0) |
-| Elementwise 4096x4096 | 6.26 | 9.68 | 1.47x | 0.84..1.55 (spans 1.0) |
-| CNN forward batch 32 | 9.11 | 11.46 | 1.29x | 1.22..1.55 |
+| MatMul 2048x2048 | 3.38 | 12.01 | **3.55x** | 3.35..3.65 |
+| Conv2D batch 64 | 3.93 | 8.94 | **2.27x** | 2.04..2.56 |
+| MatMul 1024x1024 | 0.95 | 1.94 | **1.98x** | 1.68..2.28 |
+| Conv2D batch 16 | 1.32 | 2.32 | **1.75x** | 1.68..1.82 |
+| MatMul 512x512 | 0.30 | 0.36 | 1.22x | 0.91..1.28 (spans 1.0) |
+| CNN forward batch 128 | 4.80 | 5.29 | 1.12x | 1.09..1.17 |
+| CNN train step, SGD, batch 128 | 17.87 | 18.75 | 1.05x | 1.00..1.18 |
+| CNN forward batch 32 | 3.99 | 3.12 | 0.80x | 0.78..0.82 |
+| ReduceSum 4096x4096 | 0.42 | 0.29 | 0.67x | 0.64..0.74 |
+| Elementwise 4096x4096 | 3.17 | 1.36 | 0.47x | 0.46..0.49 |
 
 Bold marks a case whose slowest run still beat the CPU by more than half again, which is the bar for calling it a win on this hardware.

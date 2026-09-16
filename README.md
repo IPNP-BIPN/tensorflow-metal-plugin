@@ -148,16 +148,16 @@ whole suite, 25 paired repetitions per case per run:
 
 | | GPU | CPU | speedup | across runs |
 | --- | ---: | ---: | ---: | ---: |
-| MatMul 1024x1024 | 1.75 ms | 14.31 ms | **8.17x** | 7.58..9.05 |
-| MatMul 2048x2048 | 7.52 ms | 48.05 ms | **6.43x** | 5.44..6.75 |
-| Conv2D, batch 64, 64x64x32 to 64 | 7.02 ms | 26.22 ms | **3.66x** | 3.10..3.69 |
-| Conv2D, batch 16 | 2.09 ms | 6.68 ms | **3.27x** | 2.02..5.54 |
-| MatMul 512x512 | 0.83 ms | 2.44 ms | **3.14x** | 2.77..4.16 |
-| CNN training step, SGD, batch 128 | 34.46 ms | 85.63 ms | **2.44x** | 2.40..2.62 |
-| CNN forward, batch 128 | 10.85 ms | 26.54 ms | **2.37x** | 2.27..2.58 |
-| CNN forward, batch 32 | 9.11 ms | 11.46 ms | 1.29x | 1.22..1.55 |
-| ReduceSum 4096x4096 | 0.99 ms | 1.82 ms | 1.98x | 0.52..2.25, spans 1.0 |
-| Elementwise 4096x4096 | 6.26 ms | 9.68 ms | 1.47x | 0.84..1.55, spans 1.0 |
+| MatMul 2048x2048 | 3.38 ms | 12.01 ms | **3.55x** | 3.35..3.65 |
+| Conv2D, batch 64, 64x64x32 to 64 | 3.93 ms | 8.94 ms | **2.27x** | 2.04..2.56 |
+| MatMul 1024x1024 | 0.95 ms | 1.94 ms | **1.98x** | 1.68..2.28 |
+| Conv2D, batch 16 | 1.32 ms | 2.32 ms | **1.75x** | 1.68..1.82 |
+| MatMul 512x512 | 0.30 ms | 0.36 ms | 1.22x | 0.91..1.28, spans 1.0 |
+| CNN forward, batch 128 | 4.80 ms | 5.29 ms | 1.12x | 1.09..1.17 |
+| CNN training step, SGD, batch 128 | 17.87 ms | 18.75 ms | 1.05x | 1.00..1.18 |
+| CNN forward, batch 32 | 3.99 ms | 3.12 ms | 0.80x | 0.78..0.82 |
+| ReduceSum 4096x4096 | 0.42 ms | 0.29 ms | 0.67x | 0.64..0.74 |
+| Elementwise 4096x4096 | 3.17 ms | 1.36 ms | 0.47x | 0.46..0.49 |
 
 The range is across whole runs and it is the honest figure, not a defect in
 the measurement. Both devices run the identical graph on the identical data in
@@ -168,18 +168,30 @@ consecutive runs of an earlier version of this script. What is left after
 fixing that is variance between whole runs, which more repetitions inside a
 run do not narrow, so the suite is run five times and the spread is reported.
 
-The last two rows land on both sides of 1.0 across runs, so on this machine
-neither has been shown to be faster on either device, whatever their medians
-say. The pattern behind that is the ordinary one: the GPU wins where there is
-arithmetic to do per byte moved and loses where there is not. A 4096x4096
-elementwise chain moves 67 MB and does three floating point operations per
-element, so it is bound by memory on a machine whose CPU shares that same
-memory.
+**These numbers replace a table that claimed far more, and the reason to
+distrust both is worth more than either.** An earlier run of this same script,
+on this same machine, against this same TensorFlow, with nothing changed in
+the kernels between them, put MatMul 2048x2048 at 6.43x where it now reads
+3.55x, and it put the CPU at 48.05 ms where it now reads 12.01 ms. A CPU four
+times slower is not a measurement of this backend, it is a measurement of what
+else the machine was doing. Neither table's "across runs" range hinted at it,
+because that range samples one session and the variance that matters sits
+between sessions. Re-measure on your own machine rather than quoting either.
+
+The bottom three rows lose to the CPU here, and the pattern is the ordinary
+one: the GPU wins where there is arithmetic to do per byte moved and loses
+where there is not. A 4096x4096 elementwise chain moves 67 MB and does three
+floating point operations per element, so it is bound by memory on a machine
+whose CPU shares that same memory.
 
 Every one of these is measured with the kernel C API for resource variables
 missing, which is to say with every Metal kernel waiting for the GPU before
-returning. See [What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do)
-for why, and what it would be worth without that.
+returning. That is not free: with `TF_METAL_SYNCHRONOUS=0` forcing the
+asynchronous path in the same session, the training step goes from 17.81 ms to
+12.32 ms and CNN forward at batch 32 from 3.97 ms to 2.30 ms, which is 1.45x
+and 1.73x. Nobody should run that way, because the races it allows are exactly
+what the waiting prevents, but it is what the missing entry points cost. See
+[What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do).
 
 The convolution numbers owe as much to the graph pass as to the kernels. It
 folds the bias and the activation into the convolution, and it turns
