@@ -299,6 +299,58 @@ wheel past cp312, has no sdist, and its repository was archived in 2021. TF
 master requires Python 3.10 or later and classifies up to cp313, so on a
 current Python there is no GPU path for TensorFlow on a Mac at all.
 
+| | metal-pluggable-device | tensorflow-metal |
+| --- | --- | --- |
+| Latest release | 0.3.0, not yet published | 1.2.0, 2025-01-31 |
+| TensorFlow releases shipped since | none yet | three: 2.19, 2.20, 2.21 |
+| Vendor | none, one maintainer and whoever joins | Apple, which has moved to MLX |
+| Source | in this repository, Apache-2.0 | closed, a binary wheel only |
+| Distribution | sdist, compiled at install against your TensorFlow | prebuilt wheels, none past cp312 |
+| Supported TensorFlow | exactly one release at a time, checked at load | not stated per release |
+| Ops on the GPU | 268, listed in [docs/kernels.md](docs/kernels.md) | not documented |
+| Unregistered op | falls back to the CPU, verified op by op | same TensorFlow mechanism, not measured here |
+| Numerics | every op compared against the CPU each push, [docs/op_errors.md](docs/op_errors.md) | not published |
+
+The comparison is about maintenance, not quality. `tensorflow-metal` was good
+and is in many places faster; what it is not any more is maintained, and a
+closed binary that nobody updates cannot be fixed by whoever needs it fixed.
+
+## Looking for maintainers
+
+One person cannot own all of this, which is why the scope was cut rather than
+completed. Named places where a second pair of hands would change what this
+package can promise:
+
+* **The MPSGraph bridge** (`kernels/metal_mps_graph.{h,mm}`, the graph cache
+  and the zero-copy aliasing through `MPSNDArray`). This is the hottest code
+  in the tree and the least redundant: a mistake here is wrong numbers in
+  every op that goes through MPSGraph, not one.
+* **The Fourier transforms** (`kernels/metal_fft_ops.mm`). Kept when the other
+  seven candidates were cut, because `tf.signal` is a real workload. It is
+  self-contained, it has a history of an in-place bug, and it is the one
+  subsystem here whose owner could be someone who only cares about audio.
+* **CTC loss** (`kernels/metal_ctc_ops.mm`). Log-space forward-backward, one
+  thread per sequence, and no CPU comparison for the V2 form because the two
+  versions disagree on where the blank class goes.
+* **The graph pass** (`metal_graph.{h,mm}`). It fuses a bias and an activation
+  and turns the layout optimizer off. What it does not do is interact
+  predictably with TensorFlow's own remapper across releases, and nothing
+  tells us when that changes except the weekly job.
+* **The profiler** (`metal_profiler.{h,mm}`). Reports command buffers rather
+  than kernels, so anything the runtime issues on its own shows up as
+  `unnamed`. Making that name the op would make the timeline usable.
+* **The resource variable C API.** Fifteen ops, every optimiser among them,
+  are not registered because a released TensorFlow does not export the entry
+  points they need. That fix is upstream, in
+  [#126377](https://github.com/tensorflow/tensorflow/pull/126377), and it is
+  worth more than any kernel in this repository.
+* **Hardware that is not an M4 Max.** Every number in
+  [BENCHMARKS.md](BENCHMARKS.md) comes from one laptop. M1, M2, M3, the Ultra
+  parts and the Mac Studio thermal envelope are all unmeasured.
+
+Open an issue saying which one, or take it and send a pull request. The
+correctness sweep is the gate: `make sweep` has to stay at 0 mismatches.
+
 ## Op coverage
 
 268 ops, each one with its dtypes and its registration site in
