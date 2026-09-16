@@ -25,9 +25,11 @@ Working, and every op it registers has been run on a real GPU and checked.
 One significant limitation is not this project's to fix: see
 [What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do).
 
-`make sweep` calls all 282 registered ops through TensorFlow's own dispatch,
-once on the GPU and once on the CPU with identical inputs, with soft placement
-off so that a missing kernel raises rather than answering from the host:
+`make sweep` calls all 282 ops this plugin registers, or would register if a
+released TensorFlow exported the entry points they need, through TensorFlow's
+own dispatch: once on the GPU and once on the CPU with identical inputs, with
+soft placement off so that a missing kernel raises rather than answering from
+the host.
 
 | | |
 | --- | --- |
@@ -48,7 +50,9 @@ have, since either makes an op unusable while looking registered.
 
 Nineteen further ops were registered here until they were removed: TensorFlow
 deprecates them in their own op defs, so no graph a current TensorFlow builds
-can contain one. See [docs/ops.md](docs/ops.md#ops-the-cuda-build-registers-and-this-one-does-not).
+can contain one. Eight whole subsystems were removed after that, on purpose
+and while working, for the reasons under [Op coverage](#op-coverage). See
+[docs/ops.md](docs/ops.md#ops-the-cuda-build-registers-and-this-one-does-not).
 
 Verified on an Apple M4 Max, macOS 26.6, against the stock
 `tensorflow==2.20.0` wheel for Python 3.12:

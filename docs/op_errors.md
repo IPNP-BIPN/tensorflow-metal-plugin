@@ -19,8 +19,8 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `DepthwiseConv2dNativeBackpropFilter` | float32 | 3.052e-05 | 1.054e-04 | 108 | 0 |
 | `DepthwiseConv2dNativeBackpropInput` | float32 | 3.052e-05 | 3.416e-06 | 378 | 0 |
 | `Conv2DBackpropInput` | float32 | 1.526e-05 | 1.082e-04 | 378 | 0 |
+| `Dilation2DBackpropFilter` | float32 | 1.526e-05 | 3.051e-07 | 12 | 0 |
 | `CropAndResizeGradBoxes` | float32 | 1.144e-05 | 1.768e-04 | 8 | 0 |
-| `Dilation2DBackpropFilter` | float32 | 7.629e-06 | 2.034e-07 | 12 | 0 |
 | `FFT3D` | complex64 | 5.395e-06 | 1.245e-06 | 256 | 0 |
 | `BiasAddGrad` | float32 | 2.861e-06 | 3.841e-07 | 3 | 0 |
 | `Conv2D` | float32 | 2.861e-06 | 5.690e-06 | 576 | 0 |
@@ -77,7 +77,6 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `Asinh` | float32 | 5.960e-08 | 1.587e-07 | 30 | 0 |
 | `Atan2` | float32 | 5.960e-08 | 7.589e-08 | 30 | 0 |
 | `Cos` | float32 | 5.960e-08 | 7.981e-08 | 30 | 0 |
-| `CropAndResizeGradImage` | float32 | 5.960e-08 | 9.313e-08 | 378 | 99 |
 | `Elu` | float32 | 5.960e-08 | 1.437e-07 | 30 | 0 |
 | `IFFT2D` | complex64 | 5.960e-08 | 3.819e-07 | 64 | 0 |
 | `Log1p` | float32 | 5.960e-08 | 4.610e-07 | 30 | 0 |
@@ -92,6 +91,7 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `Softmax` | float32 | 2.980e-08 | 1.692e-07 | 30 | 0 |
 | `Xlogy` | float32 | 2.980e-08 | 1.194e-07 | 30 | 0 |
 | `SigmoidGrad` | float32 | 1.490e-08 | 8.907e-08 | 30 | 0 |
+| `CropAndResizeGradImage` | float32 | 7.451e-09 | 9.313e-08 | 378 | 99 |
 | `Prod` | float32 | 7.451e-09 | 1.278e-07 | 6 | 0 |
 | `RsqrtGrad` | float32 | 7.451e-09 | 9.974e-08 | 30 | 0 |
 | `Abs` | float32 | 0.000e+00 | 0.000e+00 | 30 | 0 |
