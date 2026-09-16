@@ -25,6 +25,8 @@ them to the CPU is meaningless, so the sweep checks shape, dtype and
 finiteness, and that the values are not all identical.
 """
 
+import ctypes
+
 import numpy as np
 import tensorflow as tf
 
@@ -299,9 +301,11 @@ def _build():
   return recipes
 
 
-# Ops that need entry points a released TensorFlow does not export, so the
-# plugin deliberately leaves them to the host. In an in-tree build they are
-# registered and work; out of tree there is nothing to test.
+# Ops that need the kernel C API entry points for resource variables. The
+# plugin registers them only when those entry points are there, so whether
+# this set is an exemption or a list of ops to sweep depends on the
+# TensorFlow underneath rather than on anything here: see
+# resource_variable_api_available() below.
 NEEDS_UNEXPORTED_C_API = {
     "Assign", "AssignAdd", "AssignSub",
     "ResourceApplyAdam", "ResourceApplyGradientDescent",
@@ -310,6 +314,36 @@ NEEDS_UNEXPORTED_C_API = {
     "ResourceGather", "ResourceGatherNd", "ResourceScatterUpdate",
     "ParallelConcat", "_ParallelConcatStart", "_ParallelConcatUpdate",
 }
+
+# The same six symbols the plugin looks for at load, looked up the same way.
+_RESOURCE_VARIABLE_ENTRY_POINTS = (
+    "TF_AssignVariable",
+    "TF_GetInputTensorFromVariable",
+    "TF_MaybeLockVariableInputMutexesInOrder",
+    "TF_ReleaseVariableInputLockHolder",
+    "TF_OpKernelConstruction_GetAttrTensorShape",
+    "TF_OpKernelContext_ForwardRefInputToRefOutput",
+)
+
+
+def resource_variable_api_available():
+  """Whether the loaded TensorFlow exports the resource variable entry points.
+
+  Asked rather than assumed. These were declared in the headers and exported
+  by nothing from 2.20 until tensorflow/tensorflow#126377 was merged on
+  2026-09-10, which is why NEEDS_UNEXPORTED_C_API exists at all. A sweep that
+  keeps exempting them after that fix ships would stop measuring fourteen ops
+  on the day they start working, and would say "needs unexported api" about a
+  TensorFlow that exports them.
+
+  TensorFlow is already loaded into this process, so its symbols are reachable
+  through the global handle, which is where the plugin's own C++ check looks.
+  """
+  handle = ctypes.CDLL(None)
+  for name in _RESOURCE_VARIABLE_ENTRY_POINTS:
+    if not hasattr(handle, name):
+      return False
+  return True
 
 
 def more():

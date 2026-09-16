@@ -239,6 +239,10 @@ RANDOM = {}
 NO_CPU = {}
 INTERNAL = {}
 LAST_FEW = set()
+# Whether this TensorFlow exports the resource variable entry points, which
+# decides whether the ops that need them are an exemption or fourteen more ops
+# to verify. Set in main, once the plugin is loaded.
+RESOURCE_API = False
 
 
 def synthesize(op_def):
@@ -627,6 +631,13 @@ def main():
     print("no GPU device after loading the plugin, nothing to sweep")
     return 1
   print(f"sweeping against {devices[0]}")
+  global RESOURCE_API
+  RESOURCE_API = recipes.resource_variable_api_available()
+  print("resource variable kernel C API: "
+        + ("exported, so the ops that need it are swept"
+           if RESOURCE_API else
+           "not exported, so the ops that need it are not registered"))
+
   global NAMED, RANDOM, NO_CPU
   NAMED = by_name()
   NAMED.update(recipes.build())
@@ -699,10 +710,10 @@ def main():
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
-    if name in recipes.NEEDS_UNEXPORTED_C_API:
+    if name in recipes.NEEDS_UNEXPORTED_C_API and not RESOURCE_API:
       results[name] = OUT_OF_TREE
-      details[name] = ("needs kernel C API entry points a released "
-                       "TensorFlow does not export")
+      details[name] = ("needs kernel C API entry points this TensorFlow "
+                       "does not export")
       continue
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
