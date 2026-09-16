@@ -48,6 +48,35 @@ they appear as `/device:GPU:0`. Existing user code, Keras, `tf.distribute` and
 the placement rules therefore work without modification. There is no clash with
 the CUDA GPU device because CUDA is never built on macOS.
 
+### The GPU, and not the Neural Engine
+
+Everything this backend runs, runs on the GPU. The Neural Engine executes
+nothing, and cannot: it is not a Metal device, it does not consume an
+`MTLCommandBuffer`, and it is reached through CoreML rather than through
+anything a PluggableDevice can call. Both paths here end at a command buffer
+on our own queue, MPSGraph through `encodeToCommandBuffer:` and the hand
+written shaders through a compute encoder.
+
+Measured rather than assumed. A loop of convolutions and 2048x2048 matrix
+multiplies through the plugin, sampled with `powermetrics`:
+
+| | idle | under the load |
+| --- | ---: | ---: |
+| GPU active residency | 0.6 to 7% | **100.00%** |
+| GPU frequency | 338 MHz | **1578 MHz**, the top bin |
+| GPU power | 2 to 73 mW | **47.3 W** |
+
+The Neural Engine rail reported nothing throughout, which is what a rail that
+is powered down looks like.
+
+MPSGraph does have an ANE path, and it is worth knowing that it shows up here
+as noise rather than as acceleration: its compiler tried to place a boolean op
+there and printed `ANE I/O op can only do F16 MemRef <-> F32 Tensor cast` nine
+times per compiled graph before falling back. The Neural Engine is fp16 only
+and this backend computes in float32, so the attempt could not have succeeded.
+The logical operators are written as float arithmetic now, which stops the
+attempt being made at all.
+
 ### Unified memory is the load-bearing decision
 
 Every allocation is `MTLResourceStorageModeShared`, and what core receives as
