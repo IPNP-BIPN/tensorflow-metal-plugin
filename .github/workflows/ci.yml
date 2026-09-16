@@ -65,6 +65,26 @@ jobs:
       - name: Run on-device tests
         run: make PYTHON=$(which python) test
 
+      - name: Check the generated tables are current
+        # docs/kernels.md and the sweep's op list are generated from the kernel
+        # registry. Regenerating them here and demanding no diff is what keeps
+        # "generated" true: a kernel added without running `make kernels` would
+        # otherwise leave the table describing the tree as it used to be, and
+        # leave the sweep never calling the new op.
+        run: |
+          make PYTHON=$(which python) kernels
+          git diff --exit-code docs/kernels.md tools/metal_ops.txt
+
+      - name: Sweep every registered op against the CPU
+        # Thirty seconds, and the only step that compares arithmetic. The build
+        # and the on-device harness both pass against a kernel that returns
+        # plausible wrong numbers.
+        #
+        # docs/op_errors.md is regenerated as a side effect and is deliberately
+        # not diffed: a few rows move in the last digits between runs, which
+        # the file says at the top of itself.
+        run: make PYTHON=$(which python) sweep
+
       - name: Check how the plugin declines to load
         # Rebuilds twice, so it is last: everything above has already run
         # against the library the pin describes.
