@@ -305,11 +305,35 @@ in 2.19.1 and 2.18.1, and absent from every binary in the 2.20.0 wheel, with
 none added in exchange. The headers still declare them. Filed upstream as
 [tensorflow/tensorflow#126374](https://github.com/tensorflow/tensorflow/issues/126374).
 
-So this is not something the plugin can work around, and it is not permanent
-either: when those exports come back, the fifteen ops below start working here
+### It is fixed upstream, and not yet in a release
+
+[tensorflow/tensorflow#126377](https://github.com/tensorflow/tensorflow/pull/126377)
+was merged on 2026-09-10. The exports are back. They are not in 2.20.0 or in
+2.21.0, both of which shipped before the merge, so everything above is still
+what a user gets today; they are in `tf-nightly` and will be in 2.22.0.
+
+Verified here rather than taken on trust. Against `tf-nightly 2.22.0-dev20260914`
+on macOS arm64, all six symbols resolve, the plugin builds unchanged, the
+on-device harness passes, the sweep reports 268 verified with 0 mismatches,
+and the warning about the missing entry points is simply not printed: the
+plugin registers the fifteen ops and turns the synchronous mode off by itself,
 with no change to this repository.
 
-It is also the sharpest argument for the in-tree form, where the same code
+What that is worth, measured in one session against the same CPU:
+
+| | 2.20.0 | tf-nightly 2.22 | |
+| --- | ---: | ---: | --- |
+| CNN training step, SGD, batch 128 | 17.87 ms, 1.05x | **13.31 ms, 1.39x** | 1.34x faster |
+| CNN forward, batch 128 | 4.80 ms, 1.12x | **3.50 ms, 1.49x** | 1.37x faster |
+| CNN forward, batch 32 | 3.99 ms, 0.80x | **2.34 ms, 1.41x** | 1.71x, and it stops losing to the CPU |
+| MatMul 2048x2048 | 3.38 ms, 3.55x | 3.90 ms, 3.46x | unchanged |
+
+The shape of that is the point: a single large op cannot hide anything behind
+a wait that happens once, and a graph of many small ops pays the wait at every
+one. Moving the pin to 2.22.0 when it ships is
+[#4](https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues/4).
+
+It was also the sharpest argument for the in-tree form, where the same code
 links these functions directly and all fifteen ops work. That trade is the
 subject of the discussion on
 [#126254](https://github.com/tensorflow/tensorflow/pull/126254).
