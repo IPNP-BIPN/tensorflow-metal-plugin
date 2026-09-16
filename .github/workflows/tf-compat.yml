@@ -1,0 +1,89 @@
+name: TensorFlow compatibility
+
+# Early warning for ABI breaks.
+#
+# The plugin is compiled against the PluggableDevice C API of whichever
+# TensorFlow is installed, and that API version-checks through `struct_size`
+# fields that change between releases. So a TensorFlow release can break this
+# plugin without a single commit landing here. setup.py carries an upper bound
+# to stop pip installing into that situation, but the bound only helps if
+# somebody notices the new release and tests it.
+#
+# This job does that noticing. It deliberately ignores the ceiling in
+# setup.py and builds against whatever TensorFlow is newest, so a failure here
+# is informative rather than alarming: it means the next release needs work
+# before the ceiling moves. Scheduled-workflow failures notify the repository
+# owner, which is the point.
+
+on:
+  schedule:
+    # Mondays, 06:00 UTC. TensorFlow releases are not on a weekly cadence, so
+    # this is about bounded lag, not about catching the release the day it lands.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-tensorflow:
+    runs-on: macos-15   # Apple silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the newest TensorFlow, whatever it is
+        run: |
+          python -m pip install --upgrade pip
+          # No version constraint on purpose: the question this job answers is
+          # "does the newest release still work", so pinning would defeat it.
+          python -m pip install --upgrade tensorflow numpy pytest
+
+      - name: Report the version under test
+        run: |
+          python -c "import tensorflow as tf; print('tensorflow', tf.__version__)"
+          python -c "import sys; print('python', sys.version)"
+          sw_vers
+
+      - name: Compare against the ceiling declared in setup.py
+        # Not a failure: this step exists so the log says plainly whether the
+        # version being tested is one setup.py already claims to support.
+        run: |
+          python - <<'PY'
+          import re, pathlib, tensorflow as tf
+          spec = re.search(r'install_requires=\["(tensorflow[^"]+)"\]',
+                           pathlib.Path("setup.py").read_text())
+          print("installed:", tf.__version__)
+          print("declared :", spec.group(1) if spec else "not found")
+          PY
+
+      - name: Build
+        run: make PYTHON=$(which python) -j4
+
+      - name: Check exported symbols
+        run: make PYTHON=$(which python) check-symbols
+
+      - name: Compile the Metal shader library
+        run: python tools/compile_shaders.py
+
+      - name: Confirm TensorFlow actually loads the plugin
+        # The narrowest question, kept separate from the test suite: does the
+        # dylib survive TensorFlow's `struct_size` negotiation and show up as a
+        # device? This is the step that breaks first when the C API moves.
+        run: |
+          python - <<'PY'
+          import tensorflow as tf
+          devices = tf.config.list_physical_devices()
+          print(devices)
+          if not any(d.device_type == "GPU" for d in devices):
+              raise SystemExit(
+                  "plugin did not register a GPU device with TensorFlow "
+                  f"{tf.__version__}; devices were {devices}")
+          print("plugin loaded against TensorFlow", tf.__version__)
+          PY
+
+      - name: Run on-device tests
+        run: make PYTHON=$(which python) test
