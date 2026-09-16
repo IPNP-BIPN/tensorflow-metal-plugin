@@ -946,3 +946,51 @@ per-op error reporting the harness was missing.
 4. Phase 4's weekly job against the newest TensorFlow, which is what the
    version pin makes meaningful: it is now possible to say "the pin is 2.20 and
    2.22 still loads" rather than floating and never noticing.
+
+## Addendum: what Phases 2 to 4 changed
+
+Added after the scope cut, the rename and the weekly job, for the same reason
+as the addendum above: this document is a survey of a tree that no longer
+looks like this.
+
+**The eight subsystems in "Propose to delete" are gone**, all of them, at
+`8e1d734`. The audit proposed seven of them and hedged on the eighth; the
+decision taken was to cut every one except the Fourier transforms, which stay
+because `tf.signal` is a real workload on this hardware and the subsystem is
+self-contained enough for one person to own. Kernel sources go from 61 files
+to 53, kernel code from about 36,000 lines to 28,231, and registered ops from
+323 to 268. The sweep reports 268 verified and 0 mismatches against the CPU.
+
+Nothing a default TensorFlow program does breaks. Soft placement is on unless
+a program turns it off, so every cut op runs on the host with the same answer,
+more slowly. The audit had already verified that fallback works, which is what
+made the cut safe to take.
+
+**The distribution is `metal-pluggable-device`**, at `f1efb1b`. The audit
+called `tensorflow-metal-plugin` "one hyphenated suffix away from Apple's
+abandoned package", which it was. The import path is unchanged, since
+TensorFlow scans `site-packages/tensorflow-plugins` and that is still where
+the dylib lands. The wheel is 407 KB, down from the 497 KB the audit measured.
+
+**A weekly job builds against the newest TensorFlow**, at `aac463f`. It moves
+the pin to whatever is newest for the length of the run and then does what
+`ci.yml` does against the pinned release, sweep included, so the tree can say
+"the pin is 2.20 and 2.22 still works" instead of finding out from a user.
+
+**One thing the audit missed**, found while cutting: `tools/metal_ops.txt`, a
+hand-maintained list of 337 op names, is what the sweep iterates. The audit
+described the sweep as thorough and never noticed that its input is a file
+someone has to remember to edit. Cutting 55 ops made it disagree with the
+registry and the sweep failed on ops that were no longer registered, which is
+how it surfaced. It has been pruned to 282 by hand. It should be generated
+from the registry the way `docs/kernels.md` now is, and it is the next piece
+of hand maintenance in the tree worth removing.
+
+**Still open**, and both need Benjamin rather than a commit:
+
+1. Publishing to PyPI. The name is free of the collision and the sdist and
+   wheel both build; nothing has been published under either name.
+2. Whether to cut further, to the brief's own op list. That would remove
+   `GatherV2`, `OneHot`, `StridedSlice`, the image resizes, `TopKV2` and
+   `CropAndResize`, which users would plausibly miss. The audit declined to
+   guess where that line goes and so does this addendum.
