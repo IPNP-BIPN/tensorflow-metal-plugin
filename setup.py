@@ -94,8 +94,21 @@ setup(
     long_description=(HERE / "README.md").read_text(),
     long_description_content_type="text/markdown",
     license="Apache-2.0",
+    url="https://github.com/IPNP-BIPN/tensorflow-metal-plugin",
+    project_urls={
+        "Source": "https://github.com/IPNP-BIPN/tensorflow-metal-plugin",
+        "Issues": "https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues",
+    },
     python_requires=">=3.10",
-    install_requires=["tensorflow>=2.16"],
+    # Bounded on both sides on purpose. The plugin is compiled against the
+    # PluggableDevice C API of whichever TensorFlow is installed, and that
+    # API negotiates versions through `struct_size` fields that change
+    # between releases. An unbounded upper edge means a TensorFlow released
+    # after this one silently becomes the thing users build against, and
+    # the failure surfaces as a struct-size assertion at load time rather
+    # than as a resolver error at install time. Raise the ceiling only once
+    # CI has actually built and tested against the new release.
+    install_requires=["tensorflow>=2.16,<2.22"],
     # tensorflow-plugins is the directory TensorFlow scans at import, so that
     # is where the shared object has to land. Declaring it as a package is
     # what makes the wheel carry it; data_files would not, since those install
