@@ -109,10 +109,23 @@ setup(
     long_description=(HERE / "README.md").read_text(),
     long_description_content_type="text/markdown",
     license="Apache-2.0",
+    url="https://github.com/IPNP-BIPN/tensorflow-metal-plugin",
+    project_urls={
+        "Source": "https://github.com/IPNP-BIPN/tensorflow-metal-plugin",
+        "Issues": "https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues",
+    },
     python_requires=">=3.10",
-    # Narrow on purpose. The plugin is compiled against the installed
-    # TensorFlow and refuses at load to run against a different minor
-    # release, so a wider range here would only move the failure later.
+    # One release, not a range. The plugin is compiled against the
+    # PluggableDevice C API of whichever TensorFlow the target interpreter
+    # has, and that API negotiates through `struct_size` fields that move
+    # between releases: a mismatch surfaces as an assertion inside TensorFlow
+    # at load, far from the thing that caused it. A ceiling turns that into a
+    # resolver error at install time, which is better, and an exact minor
+    # turns it into a resolver error in the other direction too, which is
+    # better again. The plugin also refuses at load to run against a minor it
+    # was not built for, so a wider range here would only move the failure
+    # later. Moving the pin is what TF_SUPPORTED_VERSION and the weekly job
+    # against the newest release are for.
     install_requires=[f"tensorflow=={TF_MAJOR_MINOR}.*"],
     # tensorflow-plugins is the directory TensorFlow scans at import, so that
     # is where the shared object has to land. Declaring it as a package is
