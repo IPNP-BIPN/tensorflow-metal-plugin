@@ -958,8 +958,16 @@ looks like this.
 decision taken was to cut every one except the Fourier transforms, which stay
 because `tf.signal` is a real workload on this hardware and the subsystem is
 self-contained enough for one person to own. Kernel sources go from 61 files
-to 53, kernel code from about 36,000 lines to 28,231, and registered ops from
+to 53, kernel code from about 36,000 lines to 27,997, and registered ops from
 323 to 268. The sweep reports 268 verified and 0 mismatches against the CPU.
+
+The cut left one thing behind that deleting files did not catch: the QR, the
+Jacobi eigensolver and the LAPACK pivot replay are Metal source in the shared
+shader library, not in `metal_linalg_ops.mm`, so they survived their only
+caller and went on being compiled at every load. Removed at `6092fbe`. A
+shader is dispatched by a name assembled at the call site, so searching for
+the name finds dozens of false orphans and misses the real one; what
+identifies a dead shader is the family it belonged to.
 
 Nothing a default TensorFlow program does breaks. Soft placement is on unless
 a program turns it off, so every cut op runs on the host with the same answer,
@@ -971,6 +979,13 @@ called `tensorflow-metal-plugin` "one hyphenated suffix away from Apple's
 abandoned package", which it was. The import path is unchanged, since
 TensorFlow scans `site-packages/tensorflow-plugins` and that is still where
 the dylib lands. The wheel is 407 KB, down from the 497 KB the audit measured.
+
+**CI compares arithmetic now**, at `3c4a6ef`. The audit listed the sweep among
+the existing tests and did not say that CI never ran it: the build, the symbol
+check, the shader compile and the on-device harness all pass against a kernel
+that returns plausible wrong numbers. Thirty seconds a push closes that. The
+same step regenerates the two generated tables and fails on a diff, so
+"generated" stays true.
 
 **A weekly job builds against the newest TensorFlow**, at `aac463f`. It moves
 the pin to whatever is newest for the length of the run and then does what
