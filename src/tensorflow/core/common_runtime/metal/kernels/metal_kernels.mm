@@ -36,14 +36,11 @@ void RegisterAllMetalKernels() {
   RegisterMetalVolumePatchKernels();
   RegisterMetalSparseKernels();
   RegisterMetalDebugKernels();
-  RegisterMetalCollectiveKernels();
-  RegisterMetalCudnnRnnKernels();
   RegisterMetalGatherNdKernels();
   if (ResourceVariableApiAvailable()) {
     RegisterMetalRefVariableKernels();
   }
   RegisterMetalMisc2Kernels();
-  RegisterMetalSparseManipKernels();
   RegisterMetalFusedKernels();
   RegisterMetalFftKernels();
   RegisterMetalSparseSegmentKernels();
@@ -51,19 +48,15 @@ void RegisterAllMetalKernels() {
   RegisterMetalCtcKernels();
   RegisterMetalGenericConvKernels();
   RegisterMetalNmsKernels();
-  RegisterMetalLinalgKernels();
   if (ResourceVariableApiAvailable()) {
     RegisterMetalInplaceKernels();
   }
   RegisterMetalDynamicKernels();
-  RegisterMetalRnnKernels();
   RegisterMetalRandomDistKernels();
   RegisterMetalCropResizeKernels();
   RegisterMetalTransformKernels();
-  RegisterMetalQuantizeDequantizeKernels();
   RegisterMetalMaxPoolArgmaxKernels();
   RegisterMetalImageKernels();
-  RegisterMetalImage2Kernels();
   RegisterMetalIndexKernels();
   RegisterMetalMatrixKernels();
   RegisterMetalSearchKernels();
@@ -79,7 +72,6 @@ void RegisterAllMetalKernels() {
   RegisterMetalPoolVariantKernels();
   RegisterMetalExtraKernels();
   RegisterMetalMiscKernels();
-  RegisterMetalQuantKernels();
   RegisterMetalRandomKernels();
   // The resource variable ops and the optimisers reach a variable through
   // kernel C API entry points a released TensorFlow no longer exports. Without

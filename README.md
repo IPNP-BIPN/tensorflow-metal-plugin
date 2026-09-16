@@ -21,19 +21,19 @@ Working, and every op it registers has been run on a real GPU and checked.
 One significant limitation is not this project's to fix: see
 [What a released TensorFlow cannot do](#what-a-released-tensorflow-cannot-do).
 
-`make sweep` calls all 337 registered ops through TensorFlow's own dispatch,
+`make sweep` calls all 282 registered ops through TensorFlow's own dispatch,
 once on the GPU and once on the CPU with identical inputs, with soft placement
 off so that a missing kernel raises rather than answering from the host:
 
 | | |
 | --- | --- |
-| Verified against the CPU kernel, or against a property where there is no CPU kernel | 323 |
+| Verified against the CPU kernel, or against a property where there is no CPU kernel | 268 |
 | Need kernel C API entry points a released TensorFlow does not export | 14 |
 | **Unaccounted for** | **0** |
 
 How far apart the two answers were, per op, is in
-[docs/op_errors.md](docs/op_errors.md). 281 of the 323 carry a row there; the
-other 42 have no CPU kernel or no deterministic answer and are checked against
+[docs/op_errors.md](docs/op_errors.md). 247 of the 268 carry a row there; the
+other 21 have no CPU kernel or no deterministic answer and are checked against
 a property instead.
 
 Every op is also run twice and required to give the same answer, which is how
@@ -285,11 +285,25 @@ current Python there is no GPU path for TensorFlow on a Mac at all.
 
 ## Op coverage
 
-The backend registers every op TensorFlow registers for `DEVICE_GPU`, less the
-five TensorRT ops that `if_tensorrt` excludes from a macOS build, and less the
-fifteen above when the C API entry points they need are missing. The table of
-Metal kernels with their dtypes is in
-[docs/ops.md](docs/ops.md).
+268 ops, each one with its dtypes and its registration site in
+[docs/kernels.md](docs/kernels.md), which is generated from the registry
+rather than maintained by hand.
+
+That is on purpose less than TensorFlow registers for `DEVICE_GPU`. Eight
+subsystems were removed because one maintainer cannot answer for them: the
+`CudnnRNN` family and the fused `BlockLSTM`/`GRUBlockCell` cells, which Keras 3
+does not emit on a non-CUDA device; quantisation-aware training; the sparse and
+ragged manipulations; the NCCL collectives, which reduce across devices on a
+machine that reports one GPU; the HSV and contrast adjustments, which belong to
+an input pipeline; and `Qr`, `Lu`, `SelfAdjointEigV2` and
+`MatrixTriangularSolve`, the most delicate numerics here and the least likely
+to be on a hot path.
+
+**Nothing an unmodified program does breaks.** With soft placement on, which
+is the TF2 eager default, an op with no Metal kernel runs on the host and the
+answer is the same. What changes is speed on those ops, and that a program
+which has explicitly turned soft placement off now raises where it used to
+run on the GPU.
 
 ## Layout
 

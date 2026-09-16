@@ -239,7 +239,6 @@ RANDOM = {}
 NO_CPU = {}
 INTERNAL = {}
 LAST_FEW = set()
-PRELUDE = {"_NcclBroadcastRecv": "_NcclBroadcastSend"}
 
 
 def synthesize(op_def):
@@ -292,36 +291,6 @@ def duplicate_registrations(ops):
   return found
 
 
-# Decompositions whose output is not unique: the pivot order of an LU and the
-# sign of an eigenvector are both free, so comparing to the CPU compares two
-# valid answers and calls them different. Each is checked against the identity
-# that defines it instead, which is a stronger statement than agreeing with
-# another implementation.
-def check_lu(kwargs, outputs):
-  packed, pivots = outputs[0], outputs[1]
-  n = packed.shape[-1]
-  lower = np.tril(packed, -1) + np.eye(n, dtype=packed.dtype)
-  upper = np.triu(packed)
-  product = lower @ upper
-  # TensorFlow reports p as the permutation itself, one row index per output
-  # row, not as a sequence of swaps.
-  order = [int(i) for i in pivots]
-  original = np.asarray(kwargs["input"])
-  worst = float(np.max(np.abs(product - original[order, :])))
-  return worst < 1e-4, f"P A = L U to {worst:.2e}"
-
-
-def check_self_adjoint_eig(kwargs, outputs):
-  values, vectors = outputs[0], outputs[1]
-  original = np.asarray(kwargs["input"])
-  rebuilt = vectors @ np.diag(values) @ vectors.T
-  worst = float(np.max(np.abs(rebuilt - original)))
-  orthonormal = float(np.max(np.abs(vectors.T @ vectors
-                                    - np.eye(vectors.shape[0]))))
-  ok = worst < 1e-3 and orthonormal < 1e-4
-  return ok, f"V diag(e) V^T to {worst:.2e}, orthonormal to {orthonormal:.2e}"
-
-
 def flatten_deep(value):
   out = []
   for item in (value if isinstance(value, (list, tuple)) else [value]):
@@ -330,53 +299,6 @@ def flatten_deep(value):
     else:
       out.append(np.asarray(item))
   return out
-
-
-def check_cudnn_rnn(name, kwargs, outputs):
-  """The recurrent family, which TensorFlow has no CPU kernel for.
-
-  Pinned down by what can be stated without a second implementation: the
-  parameter buffer's size agrees with the canonical layout, the two
-  conversions round-trip exactly, the forward pass is finite and repeatable,
-  and V3 emits nothing past a sequence's own length. The arithmetic is checked
-  against a double-precision reference and central differences by the
-  on-device harness, not here.
-  """
-  first = flatten_deep(outputs)[0]
-  if name == "CudnnRNNParamsSize":
-    expected = kwargs.pop("_expected_size")
-    return int(first) == expected, f"{int(first)} floats, as the layout implies"
-  if "CanonicalToParams" in name:
-    expected = kwargs.pop("_expected_size")
-    return (int(first.shape[0]) == expected,
-            f"packs {int(first.shape[0])} floats")
-  if "ParamsToCanonical" in name:
-    original = kwargs.pop("_canonical")
-    got = flatten_deep(outputs)
-    worst = max(float(np.max(np.abs(a - b))) for a, b in zip(original, got))
-    return worst == 0.0, f"round trips exactly ({worst:.1e})"
-  if "Backprop" in name:
-    every = flatten_deep(outputs)
-    if not all(np.all(np.isfinite(v)) for v in every):
-      return False, "not finite"
-    # A gradient that ignores what it is handed would pass everything else.
-    if all(float(np.max(np.abs(v))) == 0.0 for v in every):
-      return False, "every gradient is zero"
-    return True, "finite, and not identically zero"
-  # The forward passes.
-  values = flatten_deep(outputs)[0]
-  if not np.all(np.isfinite(values)):
-    return False, "not finite"
-  if name == "CudnnRNNV3":
-    lengths = np.asarray(kwargs["sequence_lengths"])
-    beyond = 0.0
-    for row, length in enumerate(lengths):
-      if length < values.shape[0]:
-        beyond = max(beyond, float(np.max(np.abs(values[int(length):, row]))))
-    if beyond != 0.0:
-      return False, f"emits {beyond:.2e} past a sequence's length"
-    return True, "finite, and silent past each sequence's length"
-  return True, "finite"
 
 
 def check_last_few(name, kwargs, outputs):
@@ -435,18 +357,10 @@ def check_no_cpu(name, kwargs, outputs):
                                      fft_length=kwargs["fft_length"]).numpy()
     worst = float(np.max(np.abs(first - reference)))
     return worst < 1e-4, f"agrees with IRFFT2D to {worst:.2e}"
-  # The collectives over one device: the output is the input.
-  source = kwargs["input"]
-  if isinstance(source, list):
-    source = source[0]
-  worst = float(np.max(np.abs(first - np.asarray(source))))
-  return worst == 0.0, f"copies its input exactly ({worst:.2e})"
-
-
-BY_IDENTITY = {
-    "Lu": check_lu,
-    "SelfAdjointEigV2": check_self_adjoint_eig,
-}
+  # Every op here is named above. Anything added to no_cpu_reference without
+  # a property stated for it has to fail rather than pass silently, which is
+  # what a sweep that cannot compare against the CPU is for.
+  return False, "no property is stated for this op"
 
 
 def invalid_constraints(ops):
@@ -515,15 +429,6 @@ def check_internal_without_cpu(name, inputs, outputs):
           epsilon=1e-3, is_training=False)[0].numpy()
     worst = float(np.max(np.abs(outputs[0] - plain)))
     return worst < 1e-4, f"agrees with FusedBatchNormV3 to {worst:.2e}"
-  if name == "_NcclBroadcastRecv":
-    # Its input is a shape; what it produces should be what the matching send
-    # parked, which is the tensor the send recipe was given.
-    wanted = tuple(int(v) for v in np.asarray(inputs[0]))
-    if outputs[0].shape != wanted:
-      return False, f"produces {outputs[0].shape}, wanted {wanted}"
-    sent = np.asarray(INTERNAL["_NcclBroadcastSend"][0][0])
-    worst = float(np.max(np.abs(outputs[0] - sent)))
-    return worst == 0.0, f"receives exactly what was sent ({worst:.1e})"
   source = np.asarray(inputs[0])
   same = (outputs[0].shape == source.shape
           and float(np.max(np.abs(outputs[0] - source))) == 0.0)
@@ -725,10 +630,8 @@ def main():
   NAMED.update(recipes.gradients_and_rest())
   RANDOM = recipes.nondeterministic()
   NO_CPU = recipes.no_cpu_reference()
-  NO_CPU.update(recipes.cudnn_rnn_checks())
   last = recipes.last_few()
   NO_CPU.update(last)
-  NO_CPU.update(recipes.recurrent_backprops())
   global LAST_FEW
   LAST_FEW = set(last)
   global INTERNAL
@@ -756,16 +659,6 @@ def main():
   for name in ops:
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
-      # A receive has nothing to collect until its send has run. The pair is
-      # the point of the split form, so the sweep runs both.
-      prelude = PRELUDE.get(name)
-      if prelude and prelude in INTERNAL:
-        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
-        for device in ("/GPU:0", "/CPU:0"):
-          try:
-            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
-          except Exception:  # pylint: disable=broad-except
-            pass
       try:
         gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
                                         "/GPU:0"))
@@ -795,9 +688,7 @@ def main():
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      if name.startswith("CudnnRNN"):
-        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
-      elif name in LAST_FEW:
+      if name in LAST_FEW:
         ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
@@ -811,16 +702,6 @@ def main():
       continue
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
-      # A receive has nothing to collect until its send has run. The pair is
-      # the point of the split form, so the sweep runs both.
-      prelude = PRELUDE.get(name)
-      if prelude and prelude in INTERNAL:
-        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
-        for device in ("/GPU:0", "/CPU:0"):
-          try:
-            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
-          except Exception:  # pylint: disable=broad-except
-            pass
       try:
         gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
                                         "/GPU:0"))
@@ -850,9 +731,7 @@ def main():
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      if name.startswith("CudnnRNN"):
-        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
-      elif name in LAST_FEW:
+      if name in LAST_FEW:
         ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
@@ -917,10 +796,7 @@ def main():
       details[name] = f"not repeatable: {detail}"
       continue
 
-    if name in BY_IDENTITY:
-      ok, detail = BY_IDENTITY[name](kwargs, gpu)
-    else:
-      ok, detail = compare(cpu, gpu, name)
+    ok, detail = compare(cpu, gpu, name)
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
@@ -955,14 +831,13 @@ def main():
             f"{row['max_abs']:10.2e} {row['max_rel']:10.2e}")
 
   # Some ops have no CPU kernel to compare against, or no deterministic answer
-  # to compare: a random draw, a recurrent network TensorFlow only implements
-  # for cuDNN, a collective over one device. Those are checked against a
-  # property instead, so they carry no error row by design.
+  # to compare: a random draw, an n-dimensional transform TensorFlow only
+  # implements on a GPU. Those are checked against a property instead, so they
+  # carry no error row by design.
   #
   # An op outside that set with no row is the finding: it passed without
   # anything numeric being measured, which looks like a pass and is not one.
-  by_property = (set(NO_CPU) | set(BY_IDENTITY) | set(RANDOM)
-                 | CHECKED_BY_PROPERTY)
+  by_property = set(NO_CPU) | set(RANDOM) | CHECKED_BY_PROPERTY
   unmeasured = sorted(n for n, v in results.items()
                       if v in (MATCH, MISMATCH) and n not in ERRORS
                       and n not in by_property)

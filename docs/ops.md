@@ -6,7 +6,7 @@ How the backend works. For installing and using it, see the
 
 ## Status
 
-Working. 323 ops are registered and every one of them has been run on a real
+Working. 268 ops are registered and every one of them has been run on a real
 GPU and compared against the CPU kernel for the same op; `make sweep` is that
 comparison and [op_errors.md](op_errors.md) is how far apart the answers were.
 
@@ -138,16 +138,6 @@ own. Registering them again here would add nothing.
   [#126374](https://github.com/tensorflow/tensorflow/issues/126374) and is not
   fixable from inside a plugin; the proposed fix is
   [#126377](https://github.com/tensorflow/tensorflow/pull/126377).
-* **The recurrent parameter buffer's layout is this backend's own.** That is
-  allowed because the buffer is opaque and the canonical conversions are the
-  only defined way in and out of it, but a checkpoint holding a buffer written
-  by cuDNN will not load; one holding canonical weights will. Dropout's masks
-  are likewise this backend's own sequence, since nothing outside cuDNN
-  defines that one either: what is guaranteed is the rate, the inverted
-  scaling, the placement between layers, and reproducibility from the seed.
-  Everything else cuDNN accepts is implemented, including `skip_input`, a
-  recurrent projection, all four cell types, both directions, any number of
-  layers and per-sequence lengths.
 * **`ParallelConcat` is registered but always fails**, which is what every
   device does, CUDA included: the graph rewrite replaces the op with an
   allocation and one update per stacked value, so reaching the kernel means
@@ -192,8 +182,26 @@ spellings, the four `BatchMatrix` ones, `BatchMatrixTriangularSolve`,
 `BatchNormWithGlobalNormalization` ops, the two v1 `Conv3D` gradients, `TopK`
 and `TileGrad`.
 
-Everything else CUDA registers for a GPU is registered here, by one of four
-routes, and it is worth knowing which because they are not equally fast:
+Eight further subsystems were implemented, tested and then removed, because a
+package with one maintainer cannot answer for code nothing exercises: the
+`CudnnRNN` family and the fused `BlockLSTM` and `GRUBlockCell` cells, which
+Keras 3 decomposes into matmuls and elementwise ops on a non-CUDA device
+rather than emitting; `FakeQuant*` and `QuantizeAndDequantize*`; the sparse
+and ragged manipulations, which are shape work the GPU has little to win at;
+the NCCL collectives, whose only correct behaviour over the one GPU an Apple
+silicon Mac reports was a copy; `RGBToHSV`, `HSVToRGB` and the hue, saturation
+and contrast adjustments, which an input pipeline runs on the host anyway; and
+`Qr`, `Lu`, `SelfAdjointEigV2` and `MatrixTriangularSolve`, the most delicate
+numerics in the tree and the least likely to be reached by the workloads this
+backend is for. They are in the history, up to `bfa1bef`, if a user with a
+real need for one turns up.
+
+They all run on the host now, through the soft placement that is on by
+default, and produce the same answers more slowly. A program that has turned
+soft placement off will raise instead, which is the one visible change.
+
+What is still registered arrives by one of four routes, and it is worth
+knowing which because they are not equally fast:
 
 * **A Metal kernel**, for most of them. These are the ops in the table above.
 * **`DEVICE_DEFAULT`**, TensorFlow's own registration for a device with no
@@ -208,15 +216,9 @@ routes, and it is worth knowing which because they are not equally fast:
   `TensorArray` and the CSR sparse matrix ops. That is the pinned-memory case
   under [Limitations](#limitations).
 
-Two groups are registered but do less than the CUDA kernel of the same name,
-and say so rather than pretending otherwise:
-
-* **The NCCL collectives** reduce across devices, and every Apple silicon Mac
-  reports one GPU. `NcclAllReduce`, `NcclBroadcast` and `NcclReduce` copy their
-  input to their output, which is what reducing over one device means, and
-  fail at construction when asked for more than one.
-* **`ParallelConcat`** fails with TensorFlow's own message, as it does on
-  every device including CUDA.
+One op is registered but does less than the CUDA kernel of the same name, and
+says so rather than pretending otherwise: **`ParallelConcat`** fails with
+TensorFlow's own message, as it does on every device including CUDA.
 
 ## Files
 

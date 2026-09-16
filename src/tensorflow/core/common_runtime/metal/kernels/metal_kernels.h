@@ -100,17 +100,11 @@ void RegisterMetalConv3DKernels();
 // SpaceToBatchND and BatchToSpaceND.
 void RegisterMetalBatchSpaceKernels();
 
-// FakeQuantWithMinMaxArgs and its gradient.
-void RegisterMetalQuantKernels();
-
 // Reverse, LRN and CheckNumerics.
 void RegisterMetalMiscKernels();
 
 // BiasAddV1, ConjugateTranspose and Bucketize.
 void RegisterMetalAliasKernels();
-
-// RGBToHSV and AdjustContrastv2.
-void RegisterMetalImage2Kernels();
 
 // LowerBound, UpperBound, HistogramFixedWidth and TopK.
 void RegisterMetalSearchKernels();
@@ -124,9 +118,6 @@ void RegisterMetalResourceKernels();
 // Max pooling with indices, and the second-order pooling gradients.
 void RegisterMetalMaxPoolArgmaxKernels();
 
-// QuantizeAndDequantize and its V2, V3 and V4 forms.
-void RegisterMetalQuantizeDequantizeKernels();
-
 // ImageProjectiveTransformV2 and V3.
 void RegisterMetalTransformKernels();
 
@@ -136,17 +127,11 @@ void RegisterMetalCropResizeKernels();
 // The parameterised random distributions and their stateless forms.
 void RegisterMetalRandomDistKernels();
 
-// The single-step recurrent cells and their gradients.
-void RegisterMetalRnnKernels();
-
 // The ops whose output shape depends on their input values.
 void RegisterMetalDynamicKernels();
 
 // The two ops a parallel stack decomposes into.
 void RegisterMetalInplaceKernels();
-
-// MatrixTriangularSolve and its deprecated alias.
-void RegisterMetalLinalgKernels();
 
 // Non-maximum suppression, V2 through V4.
 void RegisterMetalNmsKernels();
@@ -169,21 +154,11 @@ void RegisterMetalFftKernels();
 // The fused convolution and matrix multiply the optimiser produces.
 void RegisterMetalFusedKernels();
 
-// The sparse tensor manipulations.
-void RegisterMetalSparseManipKernels();
-
 // Betainc, the sparse and ragged bin counts, Snapshot and Empty.
 void RegisterMetalMisc2Kernels();
 
 // Assign, AssignAdd and AssignSub on reference variables.
 void RegisterMetalRefVariableKernels();
-
-// The NCCL collectives, over one device.
-void RegisterMetalCollectiveKernels();
-
-// The CudnnRNN family: the recurrent networks, their parameter buffer and
-// its two canonical conversions.
-void RegisterMetalCudnnRnnKernels();
 
 // GatherNd, which is not a resource op and is registered on its own.
 void RegisterMetalGatherNdKernels();
