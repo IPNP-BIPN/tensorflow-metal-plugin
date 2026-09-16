@@ -230,6 +230,14 @@ TensorFlow carries on with the CPU.
 `TF_METAL_SKIP_VERSION_CHECK=1` loads the plugin into a TensorFlow it was not
 built against, which it otherwise declines to do.
 
+Two CI jobs, and they answer different questions. `ci.yml` builds and tests
+against the pinned release on every push, because the pin is what a user
+installs. `newest-tensorflow.yml` runs weekly against whatever TensorFlow is
+newest, with the pin moved to match for the length of the run, and says
+whether moving the pin would work: whether it still compiles, still loads, and
+still agrees with the CPU op for op. A failure there breaks nothing anyone has
+installed, it is the week's notice that the next release needs work first.
+
 ## What a released TensorFlow cannot do
 
 Six entry points of the kernel C API are declared in the headers a released

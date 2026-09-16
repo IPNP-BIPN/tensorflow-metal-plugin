@@ -1,0 +1,73 @@
+name: Newest TensorFlow
+
+# What the version pin buys, collected weekly.
+#
+# ci.yml builds against the pinned release, which is the only thing a user
+# installs. This job builds against whatever TensorFlow is newest, with the pin
+# moved to match for the length of the run, and answers the one question the
+# pin cannot answer on its own: would moving it work.
+#
+# A failure here breaks nothing a user has. It says the next release needs
+# work before the pin moves, and which of the three kinds of work: the headers
+# changed and it no longer compiles, a struct changed size and it no longer
+# loads, or a kernel changed behaviour and the sweep disagrees with the CPU.
+#
+# Scheduled runs notify the repository owner on failure, which is the report
+# this job exists to produce.
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # Mondays, 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  newest:
+    runs-on: macos-15   # Apple silicon, and the SDK this code needs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the newest TensorFlow
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade tensorflow numpy
+
+      - name: Move the pin to it, for this run only
+        # Not committed. The plugin refuses to offer a device when the loaded
+        # TensorFlow is not the pinned one, so without this the run would fail
+        # at the version check and say nothing about the release itself.
+        run: |
+          python -c "import tensorflow as tf; open('TF_SUPPORTED_VERSION','w').write(tf.__version__)"
+          echo "pinned for this run to $(cat TF_SUPPORTED_VERSION)"
+          echo "the committed pin is $(git show HEAD:TF_SUPPORTED_VERSION)"
+
+      - name: Report what we are building against
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          python -c "import tensorflow as tf; print(tf.__version__); print(tf.sysconfig.get_include())"
+          sw_vers
+
+      - name: Build
+        run: make PYTHON=$(which python) -j4
+
+      - name: Check exported symbols
+        run: make PYTHON=$(which python) check-symbols
+
+      - name: Compile the Metal shader library
+        run: python tools/compile_shaders.py
+
+      - name: Run on-device tests
+        run: make PYTHON=$(which python) test
+
+      - name: Sweep every registered op against the CPU
+        # The expensive one, and the reason this job is weekly rather than per
+        # push: a kernel whose behaviour changed under a new MPSGraph or a new
+        # TensorFlow shows up here and nowhere else.
+        run: make PYTHON=$(which python) sweep
+
+      - name: Show what the sweep would change
+        if: always()
+        run: git diff --stat
