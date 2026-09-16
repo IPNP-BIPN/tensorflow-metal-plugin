@@ -349,8 +349,19 @@ package can promise:
   [BENCHMARKS.md](BENCHMARKS.md) comes from one laptop. M1, M2, M3, the Ultra
   parts and the Mac Studio thermal envelope are all unmeasured.
 
-Open an issue saying which one, or take it and send a pull request. The
-correctness sweep is the gate: `make sweep` has to stay at 0 mismatches.
+Each of those is an open issue: the five subsystems are
+[#7](https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues/7), the
+upstream C API is
+[#5](https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues/5), and
+hardware that is not this laptop is
+[#6](https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues/6), which
+needs one command and a paste.
+[#1](https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues/1) tracks the
+rest.
+
+Comment saying which one, or take it and send a pull request. The correctness
+sweep is the gate: `make sweep` has to stay at 0 mismatches, and `make
+kernels` regenerates the tables CI checks are current.
 
 ## Op coverage
 
