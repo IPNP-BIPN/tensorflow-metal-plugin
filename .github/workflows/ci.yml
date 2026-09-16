@@ -85,6 +85,25 @@ jobs:
         # the file says at the top of itself.
         run: make PYTHON=$(which python) sweep
 
+      - name: Benchmark against the CPU
+        # Recorded, never a gate. A shared runner throttles and shares its
+        # memory bandwidth, so its ratios say nothing next to a quiet laptop's,
+        # and the tool says as much about a single run. What it is good for is
+        # having somewhere for a change that makes the GPU path slower to show
+        # up, on hardware nobody has to own.
+        run: |
+          python benchmarks/benchmark.py --plugin build/libmetal_plugin.dylib \
+            --repeats 1 --runs 10 --report ci-benchmarks.md
+          cat ci-benchmarks.md
+
+      - name: Keep the benchmark table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-python-${{ matrix.python }}
+          path: ci-benchmarks.md
+          if-no-files-found: warn
+
       - name: Check how the plugin declines to load
         # Rebuilds twice, so it is last: everything above has already run
         # against the library the pin describes.
