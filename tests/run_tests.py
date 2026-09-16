@@ -57,10 +57,18 @@ def close(name, got, want, rtol=1e-4, atol=2e-4):
 def main():
   print(f"tensorflow {tf.__version__}")
   before = [d.name for d in tf.config.list_physical_devices("GPU")]
-  load_library.load_pluggable_device_library(PLUGIN)
+  # Loading a platform TensorFlow already has is not an error it reports, it
+  # is a CHECK failure that takes the process down with "platform is already
+  # registered with name: METAL". TensorFlow loads everything in
+  # site-packages/tensorflow-plugins at import, so this happens to anyone who
+  # has the package installed and then runs the tests from a checkout.
+  if before:
+    print(f"already loaded from the installed package, testing that: {before}")
+  else:
+    load_library.load_pluggable_device_library(PLUGIN)
   after = [d.name for d in tf.config.list_physical_devices("GPU")]
   print(f"GPU devices before {before}, after {after}")
-  check("the plugin adds a GPU device", after == ["/physical_device:GPU:0"])
+  check("a GPU device is there", after == ["/physical_device:GPU:0"])
   if not after:
     print("\nno device, nothing further to check")
     return 1

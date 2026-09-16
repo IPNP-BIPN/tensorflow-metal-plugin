@@ -169,7 +169,10 @@ def main():
   parser.add_argument("--report", default=None,
                       help="write the table to this file, as markdown")
   args = parser.parse_args()
-  if args.plugin:
+  # Skipped when TensorFlow has already loaded the installed package, since
+  # registering the same platform twice is a CHECK failure rather than an
+  # error, and it aborts the process.
+  if args.plugin and not tf.config.list_physical_devices("GPU"):
     load_library.load_pluggable_device_library(args.plugin)
   print(f"tensorflow {tf.__version__}")
   devices = [d.name for d in tf.config.list_physical_devices()]

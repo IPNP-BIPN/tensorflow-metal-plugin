@@ -228,6 +228,15 @@ or install it so that `import tensorflow` finds it:
 make install
 ```
 
+Not both in one interpreter. TensorFlow loads everything in
+`site-packages/tensorflow-plugins` at import, so once the package is installed
+the plugin is already there, and loading the dylib by hand on top of it
+registers the `METAL` platform a second time. TensorFlow treats that as a
+CHECK failure rather than an error it can return, and the process aborts. The
+test scripts here notice an already-registered plugin and test that one
+instead; `make kernels` refuses, because the table it writes is the difference
+the plugin makes and there is no before to measure.
+
 `TF_DISABLE_METAL=1` keeps the backend out of the process without
 uninstalling it: the platform still registers, and offers no device, so
 TensorFlow carries on with the CPU.

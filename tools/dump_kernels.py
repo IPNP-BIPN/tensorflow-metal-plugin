@@ -89,6 +89,17 @@ def main():
                       default=str(ROOT / "tools" / "metal_ops.txt"))
   args = parser.parse_args()
 
+  # The table is the difference the plugin makes, so the snapshot has to be
+  # taken before it loads. If TensorFlow has already loaded it from
+  # site-packages/tensorflow-plugins there is no before to take, and loading
+  # it a second time would abort the process rather than report anything.
+  if tf.config.list_physical_devices("GPU"):
+    raise SystemExit(
+        "a GPU device is already registered, so the plugin is installed in "
+        "this interpreter and there is no pre-plugin registry to compare "
+        "against. Run this from an interpreter that has TensorFlow but not "
+        "this package installed.")
+
   before = snapshot()
   load_library.load_pluggable_device_library(args.plugin)
   after = snapshot()

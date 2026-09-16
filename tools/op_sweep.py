@@ -616,7 +616,11 @@ def main():
                       help="how many rows of the error table to print")
   args = parser.parse_args()
 
-  load_library.load_pluggable_device_library(args.plugin)
+  # Not if TensorFlow already loaded it from site-packages/tensorflow-plugins:
+  # registering the same platform twice is a CHECK failure, not an error, and
+  # it takes the process down.
+  if not tf.config.list_physical_devices("GPU"):
+    load_library.load_pluggable_device_library(args.plugin)
   tf.config.set_soft_device_placement(False)
   devices = [d.name for d in tf.config.list_physical_devices("GPU")]
   if not devices:

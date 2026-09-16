@@ -104,13 +104,20 @@ jobs:
           path: ci-benchmarks.md
           if-no-files-found: warn
 
-      - name: Install the package and use it as a user would
-        # The one step a user actually performs. Everything above loads the
-        # dylib by hand, so a wheel that puts it anywhere other than
-        # site-packages/tensorflow-plugins would pass all of it.
-        run: make PYTHON=$(which python) test-install
-
       - name: Check how the plugin declines to load
-        # Rebuilds twice, so it is last: everything above has already run
+        # Rebuilds twice, so it is late: everything above has already run
         # against the library the pin describes.
         run: make PYTHON=$(which python) test-load
+
+      - name: Install the package and use it as a user would
+        # Last, and it has to be last. TensorFlow loads everything in
+        # site-packages/tensorflow-plugins at import, so from here on the
+        # plugin is already registered in this interpreter, and any step that
+        # loads the dylib by hand would register the METAL platform twice.
+        # That is a CHECK failure inside TensorFlow, not an error it returns,
+        # so it takes the process down.
+        #
+        # This is also the one step a user actually performs. Everything above
+        # loads the dylib by hand, so a wheel that puts it anywhere other than
+        # tensorflow-plugins would pass all of it and fail here.
+        run: make PYTHON=$(which python) test-install
