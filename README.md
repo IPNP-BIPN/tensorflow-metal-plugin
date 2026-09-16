@@ -210,6 +210,7 @@ make                                  # or: make PYTHON=/path/to/venv/bin/python
 make check-symbols
 make test                             # on-device checks against the CPU
 make test-load                        # how the plugin declines to load
+make test-install                     # pip install it, then use it as a user
 make sweep                            # every op, against the CPU
 make kernels                          # regenerate docs/kernels.md and the sweep's op list
 ```

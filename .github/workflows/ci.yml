@@ -104,6 +104,12 @@ jobs:
           path: ci-benchmarks.md
           if-no-files-found: warn
 
+      - name: Install the package and use it as a user would
+        # The one step a user actually performs. Everything above loads the
+        # dylib by hand, so a wheel that puts it anywhere other than
+        # site-packages/tensorflow-plugins would pass all of it.
+        run: make PYTHON=$(which python) test-install
+
       - name: Check how the plugin declines to load
         # Rebuilds twice, so it is last: everything above has already run
         # against the library the pin describes.

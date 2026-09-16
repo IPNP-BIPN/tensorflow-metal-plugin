@@ -108,7 +108,8 @@ LDFLAGS := -dynamiclib -mmacosx-version-min=$(MACOS_MIN) $(FRAMEWORKS) \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test test-stream test-load sweep kernels benchmark install
+.PHONY: all clean test test-stream test-load test-install sweep kernels \
+        benchmark install
 
 all: $(OUT)
 
@@ -169,6 +170,15 @@ kernels: $(OUT)
 
 install: $(OUT)
 	$(PYTHON) -m pip install .
+
+# The package as a user receives it: installed, and then asked what devices
+# exist. Everything under `test` loads the freshly built dylib by hand, which
+# proves the kernels and proves nothing about the packaging: a wheel that puts
+# the shared object in the wrong directory passes all of it and fails the only
+# step a user performs. This installs into $(PYTHON), so point it at a
+# throwaway environment if that matters.
+test-install: install
+	$(PYTHON) tests/installed_test.py
 
 clean:
 	rm -rf $(BUILD)
