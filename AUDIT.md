@@ -982,9 +982,11 @@ hand-maintained list of 337 op names, is what the sweep iterates. The audit
 described the sweep as thorough and never noticed that its input is a file
 someone has to remember to edit. Cutting 55 ops made it disagree with the
 registry and the sweep failed on ops that were no longer registered, which is
-how it surfaced. It has been pruned to 282 by hand. It should be generated
-from the registry the way `docs/kernels.md` now is, and it is the next piece
-of hand maintenance in the tree worth removing.
+how it surfaced. `make kernels` now writes it too, from the registry plus the
+fourteen ops that need kernel C API entry points no released TensorFlow
+exports, so the sweep's input cannot drift from what is registered. The
+generated file matched the hand-pruned one exactly, which is the only evidence
+available that the hand-maintained version was still correct.
 
 **Still open**, and both need Benjamin rather than a commit:
 

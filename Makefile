@@ -161,8 +161,9 @@ benchmark: $(OUT)
 	$(PYTHON) benchmarks/benchmark.py --plugin $(OUT) --repeats 5 \
 	  --report BENCHMARKS.md
 
-# Regenerates the table of what the plugin registers, by asking TensorFlow
-# rather than by anyone remembering to update it.
+# Regenerates the table of what the plugin registers, and the op list the
+# sweep iterates, by asking TensorFlow rather than by anyone remembering to
+# update them. Run it after adding or removing a kernel.
 kernels: $(OUT)
 	$(PYTHON) tools/dump_kernels.py
 

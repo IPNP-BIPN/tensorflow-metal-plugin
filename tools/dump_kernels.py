@@ -25,6 +25,11 @@ this plugin's to claim.
 
 Source locations come from the op name's first appearance in the kernels
 directory, which is where the registration list holds it.
+
+The same run writes `tools/metal_ops.txt`, which is what the sweep iterates.
+That file was maintained by hand until the scope cut made it disagree with the
+registry by 55 ops, and a sweep whose input has to be remembered is a sweep
+that quietly stops covering what was added last.
 """
 
 import argparse
@@ -39,6 +44,9 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import tensorflow as tf  # pylint: disable=g-import-not-at-top
 from tensorflow.python.framework import kernels  # pylint: disable=g-import-not-at-top
 from tensorflow.python.framework import load_library  # pylint: disable=g-import-not-at-top
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import recipes  # pylint: disable=g-import-not-at-top,wrong-import-position,wrong-import-order
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 KERNEL_DIR = ROOT / "src/tensorflow/core/common_runtime/metal/kernels"
@@ -77,6 +85,8 @@ def main():
   parser.add_argument("--plugin",
                       default=str(ROOT / "build" / "libmetal_plugin.dylib"))
   parser.add_argument("--output", default=str(ROOT / "docs" / "kernels.md"))
+  parser.add_argument("--ops-output",
+                      default=str(ROOT / "tools" / "metal_ops.txt"))
   args = parser.parse_args()
 
   before = snapshot()
@@ -124,7 +134,17 @@ def main():
       mark = "" if row["new"] else " (adds to TensorFlow's own)"
       out.write(f"| `{op}`{mark} | {dtypes} | {host} | {source} |\n")
 
+  # The sweep's input. The ops that need unexported kernel C API entry points
+  # are registered on no released TensorFlow and so are absent from `added`,
+  # but the sweep still has to account for them: dropping them here would turn
+  # fourteen ops that are missing for a stated reason into fourteen ops nobody
+  # is counting.
+  sweepable = sorted(set(added) | recipes.NEEDS_UNEXPORTED_C_API)
+  with open(args.ops_output, "w") as out:
+    out.write("\n".join(sweepable) + "\n")
+
   print(f"wrote {args.output}: {len(added)} ops")
+  print(f"wrote {args.ops_output}: {len(sweepable)} ops to sweep")
   return 0
 
 

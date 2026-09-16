@@ -207,7 +207,7 @@ make check-symbols
 make test                             # on-device checks against the CPU
 make test-load                        # how the plugin declines to load
 make sweep                            # every op, against the CPU
-make kernels                          # regenerate docs/kernels.md
+make kernels                          # regenerate docs/kernels.md and the sweep's op list
 ```
 
 Then either point TensorFlow at it directly:
