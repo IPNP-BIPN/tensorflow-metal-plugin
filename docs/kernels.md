@@ -20,8 +20,8 @@ Dtypes are the `T` or `dtype` constraint as the registry holds it after registra
 | `Any` | (no dtype constraint) | reduction_indices | [metal_reduction_ops.mm:57](../src/tensorflow/core/common_runtime/metal/kernels/metal_reduction_ops.mm#L57) |
 | `ApproxTopK` | float16, float32 |  | [metal_search_ops.mm:378](../src/tensorflow/core/common_runtime/metal/kernels/metal_search_ops.mm#L378) |
 | `ApproximateEqual` | float16, float32 |  | [metal_compare_ops.mm:87](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L87) |
-| `ArgMax` | float16, float32 | dimension | [metal_compare_ops.mm:434](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L434) |
-| `ArgMin` | float16, float32 | dimension | [metal_compare_ops.mm:434](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L434) |
+| `ArgMax` | float16, float32 | dimension | [metal_compare_ops.mm:476](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L476) |
+| `ArgMin` | float16, float32 | dimension | [metal_compare_ops.mm:476](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L476) |
 | `Asin` | float16, float32 |  | [metal_elementwise_ops.mm:296](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L296) |
 | `Asinh` | float16, float32 |  | [metal_elementwise_ops.mm:301](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L301) |
 | `Atan` | float16, float32 |  | [metal_elementwise_ops.mm:298](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L298) |
@@ -122,8 +122,8 @@ Dtypes are the `T` or `dtype` constraint as the registry holds it after registra
 | `Identity` (adds to TensorFlow's own) | int32 |  | [metal_identity_op.mm:145](../src/tensorflow/core/common_runtime/metal/kernels/metal_identity_op.mm#L145) |
 | `ImageProjectiveTransformV2` | float32 | output_shape | [metal_transform_ops.mm:272](../src/tensorflow/core/common_runtime/metal/kernels/metal_transform_ops.mm#L272) |
 | `ImageProjectiveTransformV3` | float32 | fill_value, output_shape | [metal_transform_ops.mm:274](../src/tensorflow/core/common_runtime/metal/kernels/metal_transform_ops.mm#L274) |
-| `InTopK` | int32, int64 |  | [metal_compare_ops.mm:559](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L559) |
-| `InTopKV2` | int32, int64 | k | [metal_compare_ops.mm:742](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L742) |
+| `InTopK` | int32, int64 |  | [metal_compare_ops.mm:601](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L601) |
+| `InTopKV2` | int32, int64 | k | [metal_compare_ops.mm:784](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L784) |
 | `L2Loss` | float16, float32 |  | [metal_matrix_ops.mm:706](../src/tensorflow/core/common_runtime/metal/kernels/metal_matrix_ops.mm#L706) |
 | `LRN` | float32 |  | [metal_misc_ops.mm:270](../src/tensorflow/core/common_runtime/metal/kernels/metal_misc_ops.mm#L270) |
 | `LRNGrad` | float32 |  | [metal_extra_ops.mm:305](../src/tensorflow/core/common_runtime/metal/kernels/metal_extra_ops.mm#L305) |
@@ -136,7 +136,7 @@ Dtypes are the `T` or `dtype` constraint as the registry holds it after registra
 | `Log1p` | float16, float32 |  | [metal_elementwise_ops.mm:291](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L291) |
 | `LogSoftmax` | float16, float32 |  | [metal_activation_ops.mm:95](../src/tensorflow/core/common_runtime/metal/kernels/metal_activation_ops.mm#L95) |
 | `LogicalAnd` | (no dtype constraint) |  | [metal_compare_ops.mm:85](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L85) |
-| `LogicalNot` | (no dtype constraint) |  | [metal_compare_ops.mm:248](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L248) |
+| `LogicalNot` | (no dtype constraint) |  | [metal_compare_ops.mm:279](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L279) |
 | `LogicalOr` | (no dtype constraint) |  | [metal_compare_ops.mm:86](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L86) |
 | `LowerBound` | float16, float32 |  | [metal_search_ops.mm:143](../src/tensorflow/core/common_runtime/metal/kernels/metal_search_ops.mm#L143) |
 | `MatMul` | float16, float32 |  | [metal_matmul_op.mm:322](../src/tensorflow/core/common_runtime/metal/kernels/metal_matmul_op.mm#L322) |
@@ -210,8 +210,8 @@ Dtypes are the `T` or `dtype` constraint as the registry holds it after registra
 | `Round` | float16, float32 |  | [metal_elementwise_ops.mm:284](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L284) |
 | `Rsqrt` | float16, float32 |  | [metal_elementwise_ops.mm:274](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L274) |
 | `RsqrtGrad` | float16, float32 |  | [metal_elementwise_ops.mm:482](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L482) |
-| `Select` | float16, float32, int32, int64 |  | [metal_compare_ops.mm:306](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L306) |
-| `SelectV2` | float16, float32, int32, int64 |  | [metal_compare_ops.mm:769](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L769) |
+| `Select` | float16, float32, int32, int64 |  | [metal_compare_ops.mm:348](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L348) |
+| `SelectV2` | float16, float32, int32, int64 |  | [metal_compare_ops.mm:811](../src/tensorflow/core/common_runtime/metal/kernels/metal_compare_ops.mm#L811) |
 | `Selu` | float16, float32 |  | [metal_elementwise_ops.mm:290](../src/tensorflow/core/common_runtime/metal/kernels/metal_elementwise_ops.mm#L290) |
 | `SeluGrad` | float16, float32 |  | [metal_activation_ops.mm:89](../src/tensorflow/core/common_runtime/metal/kernels/metal_activation_ops.mm#L89) |
 | `Sigmoid` | float16, float32 |  | [metal_fused_ops.mm:121](../src/tensorflow/core/common_runtime/metal/kernels/metal_fused_ops.mm#L121) |
