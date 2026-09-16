@@ -1,8 +1,12 @@
-# tensorflow-metal-plugin
+# metal-pluggable-device
 
 A Metal GPU backend for TensorFlow on Apple silicon, built as an out-of-tree
 PluggableDevice. It loads into a stock TensorFlow wheel and adds
 `/physical_device:GPU:0`.
+
+Not `tensorflow-metal`, which is Apple's package and has not shipped since
+January 2025, three TensorFlow minor releases ago. This one is unaffiliated
+with Apple and is named so that the two cannot be confused at a pip prompt.
 
 This is the out-of-tree form of the backend proposed in
 [tensorflow/tensorflow#126384](https://github.com/tensorflow/tensorflow/pull/126384).
@@ -63,7 +67,7 @@ instead of quietly producing a correct answer on the wrong device.
 
 ```
 pip install "tensorflow==2.20.*"
-pip install tensorflow-metal-plugin
+pip install metal-pluggable-device
 ```
 
 Requires macOS 15 or later on Apple silicon, and **TensorFlow 2.20**. One
