@@ -445,108 +445,6 @@ void LRNGrad_ComputeImpl(ExtraOp* op, TF_OpKernelContext* ctx,
   RunGraph(stream, *cached, @[ g_data, x_data ], @[ o_data ], status);
 }
 
-/*** ADJUST CONTRAST, THE V1 FORM ***/
-
-// The v1 op takes explicit output bounds alongside the factor and clamps to
-// them; v2 has neither.
-void AdjustContrastV1_ComputeImpl(ExtraOp* op, TF_OpKernelContext* ctx,
-                                  TF_Status* status) {
-  ScopedTensor images, factor, lo_t, hi_t;
-  TF_GetInput(ctx, 0, images.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-  TF_GetInput(ctx, 1, factor.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-  TF_GetInput(ctx, 2, lo_t.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-  TF_GetInput(ctx, 3, hi_t.address(), status);
-  if (TF_GetCode(status) != TF_OK) return;
-
-  const std::vector<int64_t> shape = ShapeOf(images.get());
-  if (shape.size() < 3) {
-    TF_SetStatus(status, TF_INVALID_ARGUMENT,
-                 "Metal: AdjustContrast needs at least three dimensions.");
-    return;
-  }
-  const int64_t count = ElementCount(shape);
-  ScopedTensor output;
-  output.reset(TF_AllocateOutput(
-      ctx, 0, TF_FLOAT, shape.data(), static_cast<int>(shape.size()),
-      static_cast<size_t>(count) * TF_DataTypeSize(TF_FLOAT), status));
-  if (TF_GetCode(status) != TF_OK) return;
-  if (count == 0) return;
-
-  SP_Stream stream = StreamForContext(ctx, status);
-  if (TF_GetCode(status) != TF_OK) return;
-  id<MTLDevice> device = DeviceForStream(stream);
-
-  std::string key = "AdjustContrastV1";
-  AppendShapeToKey(shape, &key);
-  const NSInteger rank = static_cast<NSInteger>(shape.size());
-  NSArray<NSNumber*>* axes = @[ @(rank - 3), @(rank - 2) ];
-  const std::vector<int64_t> scalar = {1};
-
-  const CachedGraph* cached = LookupOrBuildGraph(
-      key,
-      ^(CachedGraph* out) {
-        MPSGraph* g = out->graph;
-        MPSGraphTensor* x = [g placeholderWithShape:MPSShape(shape)
-                                           dataType:MPSDataTypeFloat32
-                                               name:nil];
-        MPSGraphTensor* f = [g placeholderWithShape:MPSShape(scalar)
-                                           dataType:MPSDataTypeFloat32
-                                               name:nil];
-        MPSGraphTensor* lo = [g placeholderWithShape:MPSShape(scalar)
-                                            dataType:MPSDataTypeFloat32
-                                                name:nil];
-        MPSGraphTensor* hi = [g placeholderWithShape:MPSShape(scalar)
-                                            dataType:MPSDataTypeFloat32
-                                                name:nil];
-        MPSGraphTensor* mean = [g meanOfTensor:x axes:axes name:nil];
-        MPSGraphTensor* adjusted = [g
-            additionWithPrimaryTensor:
-                [g multiplicationWithPrimaryTensor:
-                       [g subtractionWithPrimaryTensor:x
-                                       secondaryTensor:mean
-                                                  name:nil]
-                                   secondaryTensor:f
-                                              name:nil]
-                      secondaryTensor:mean
-                                 name:nil];
-        [out->inputs addObject:x];
-        [out->inputs addObject:f];
-        [out->inputs addObject:lo];
-        [out->inputs addObject:hi];
-        [out->outputs addObject:[g clampWithTensor:adjusted
-                                    minValueTensor:lo
-                                    maxValueTensor:hi
-                                              name:nil]];
-      },
-      status);
-  if (cached == nullptr) return;
-
-  BufferSlice f_slice, lo_slice, hi_slice;
-  if (!SliceForTensor(factor.get(), &f_slice, status)) return;
-  if (!SliceForTensor(lo_t.get(), &lo_slice, status)) return;
-  if (!SliceForTensor(hi_t.get(), &hi_slice, status)) return;
-  MPSGraphTensorData* x_data =
-      TensorDataForTensor(images.get(), TF_FLOAT, device, status);
-  if (x_data == nil) return;
-  MPSGraphTensorData* f_data =
-      TensorDataFor(f_slice, scalar, TF_FLOAT, device, status);
-  if (f_data == nil) return;
-  MPSGraphTensorData* lo_data =
-      TensorDataFor(lo_slice, scalar, TF_FLOAT, device, status);
-  if (lo_data == nil) return;
-  MPSGraphTensorData* hi_data =
-      TensorDataFor(hi_slice, scalar, TF_FLOAT, device, status);
-  if (hi_data == nil) return;
-  MPSGraphTensorData* o_data =
-      TensorDataForTensor(output.get(), TF_FLOAT, device, status);
-  if (o_data == nil) return;
-  RunGraph(stream, *cached, @[ x_data, f_data, lo_data, hi_data ],
-           @[ o_data ], status);
-}
-
 /*** WRAPPERS AND REGISTRATION ***/
 
 #define METAL_COMPUTE(NAME, IMPL)                                             \
@@ -566,7 +464,6 @@ void AdjustContrastV1_ComputeImpl(ExtraOp* op, TF_OpKernelContext* ctx,
 METAL_COMPUTE(PopulationCount_Compute, PopulationCount_ComputeImpl)
 METAL_COMPUTE(CumulativeLogsumexp_Compute, CumulativeLogsumexp_ComputeImpl)
 METAL_COMPUTE(LRNGrad_Compute, LRNGrad_ComputeImpl)
-METAL_COMPUTE(AdjustContrastV1_Compute, AdjustContrastV1_ComputeImpl)
 
 #undef METAL_COMPUTE
 
@@ -619,8 +516,6 @@ void RegisterMetalExtraKernels() {
              std::string("MetalPopulationCount") + kIndexSuffixes[j], {});
   }
   Register("LRNGrad", &LRNGrad_Compute, TF_FLOAT, "MetalLRNGradFloat", {});
-  Register("AdjustContrast", &AdjustContrastV1_Compute, TF_FLOAT,
-           "MetalAdjustContrastFloat", {});
 }
 
 }  // namespace metal

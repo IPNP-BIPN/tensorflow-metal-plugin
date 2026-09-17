@@ -249,28 +249,6 @@ struct RowMoveParams {
   uint32_t padding0;
 };
 
-// Parameters for turning LAPACK-style pivots into a permutation. Layout must
-// match the Metal struct.
-struct PivotParams {
-  uint32_t batch;
-  uint32_t order;
-  uint32_t padding0;
-  uint32_t padding1;
-};
-
-// Parameters for the dense factorisation shaders. Layout must match the Metal
-// struct. `k` is min(rows, columns).
-struct FactorParams {
-  uint32_t batch;
-  uint32_t rows;
-  uint32_t cols;
-  uint32_t k;
-  uint32_t full_matrices;
-  uint32_t compute_vectors;
-  uint32_t padding0;
-  uint32_t padding1;
-};
-
 // Parameters for the connectionist temporal classification loss. Layout must
 // match the Metal struct. `blank` is the class index the alignment treats as
 // the blank, which differs between the two versions of the op.

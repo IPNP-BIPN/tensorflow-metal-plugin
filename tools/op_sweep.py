@@ -48,9 +48,12 @@ ROOT = os.path.dirname(HERE)
 
 MATCH, MISMATCH, GPU_ERROR, UNEXERCISED, NO_RECIPE = (
     "match", "mismatch", "gpu-error", "unexercised", "no-recipe")
-# Two kinds of "cannot be exercised" that are not gaps in the backend.
-REMOVED = "removed-from-tensorflow"
-OUT_OF_TREE = "needs-unexported-api"
+# Not gaps in the backend, and kept apart because the two have different
+# futures: the first disappears when a TensorFlow exports the entry points,
+# the second never does, because eager cannot call a reference variable op and
+# a rewritten op is not meant to be reached.
+NO_ENTRY_POINTS = "needs-unexported-api"
+NOT_EAGER = "not-callable-from-eager"
 
 
 def load_ops(path):
@@ -240,7 +243,14 @@ RANDOM = {}
 NO_CPU = {}
 INTERNAL = {}
 LAST_FEW = set()
-PRELUDE = {"_NcclBroadcastRecv": "_NcclBroadcastSend"}
+# Ops whose recipe is a callable rather than an argument dictionary, because
+# they need a resource variable and a resource is bound to the device that
+# created it. Populated only when the entry points they need are exported.
+RESOURCE = {}
+# Whether this TensorFlow exports the resource variable entry points, which
+# decides whether the ops that need them are an exemption or fourteen more ops
+# to verify. Set in main, once the plugin is loaded.
+RESOURCE_API = False
 
 
 def synthesize(op_def):
@@ -293,36 +303,6 @@ def duplicate_registrations(ops):
   return found
 
 
-# Decompositions whose output is not unique: the pivot order of an LU and the
-# sign of an eigenvector are both free, so comparing to the CPU compares two
-# valid answers and calls them different. Each is checked against the identity
-# that defines it instead, which is a stronger statement than agreeing with
-# another implementation.
-def check_lu(kwargs, outputs):
-  packed, pivots = outputs[0], outputs[1]
-  n = packed.shape[-1]
-  lower = np.tril(packed, -1) + np.eye(n, dtype=packed.dtype)
-  upper = np.triu(packed)
-  product = lower @ upper
-  # TensorFlow reports p as the permutation itself, one row index per output
-  # row, not as a sequence of swaps.
-  order = [int(i) for i in pivots]
-  original = np.asarray(kwargs["input"])
-  worst = float(np.max(np.abs(product - original[order, :])))
-  return worst < 1e-4, f"P A = L U to {worst:.2e}"
-
-
-def check_self_adjoint_eig(kwargs, outputs):
-  values, vectors = outputs[0], outputs[1]
-  original = np.asarray(kwargs["input"])
-  rebuilt = vectors @ np.diag(values) @ vectors.T
-  worst = float(np.max(np.abs(rebuilt - original)))
-  orthonormal = float(np.max(np.abs(vectors.T @ vectors
-                                    - np.eye(vectors.shape[0]))))
-  ok = worst < 1e-3 and orthonormal < 1e-4
-  return ok, f"V diag(e) V^T to {worst:.2e}, orthonormal to {orthonormal:.2e}"
-
-
 def flatten_deep(value):
   out = []
   for item in (value if isinstance(value, (list, tuple)) else [value]):
@@ -331,53 +311,6 @@ def flatten_deep(value):
     else:
       out.append(np.asarray(item))
   return out
-
-
-def check_cudnn_rnn(name, kwargs, outputs):
-  """The recurrent family, which TensorFlow has no CPU kernel for.
-
-  Pinned down by what can be stated without a second implementation: the
-  parameter buffer's size agrees with the canonical layout, the two
-  conversions round-trip exactly, the forward pass is finite and repeatable,
-  and V3 emits nothing past a sequence's own length. The arithmetic is checked
-  against a double-precision reference and central differences by the
-  on-device harness, not here.
-  """
-  first = flatten_deep(outputs)[0]
-  if name == "CudnnRNNParamsSize":
-    expected = kwargs.pop("_expected_size")
-    return int(first) == expected, f"{int(first)} floats, as the layout implies"
-  if "CanonicalToParams" in name:
-    expected = kwargs.pop("_expected_size")
-    return (int(first.shape[0]) == expected,
-            f"packs {int(first.shape[0])} floats")
-  if "ParamsToCanonical" in name:
-    original = kwargs.pop("_canonical")
-    got = flatten_deep(outputs)
-    worst = max(float(np.max(np.abs(a - b))) for a, b in zip(original, got))
-    return worst == 0.0, f"round trips exactly ({worst:.1e})"
-  if "Backprop" in name:
-    every = flatten_deep(outputs)
-    if not all(np.all(np.isfinite(v)) for v in every):
-      return False, "not finite"
-    # A gradient that ignores what it is handed would pass everything else.
-    if all(float(np.max(np.abs(v))) == 0.0 for v in every):
-      return False, "every gradient is zero"
-    return True, "finite, and not identically zero"
-  # The forward passes.
-  values = flatten_deep(outputs)[0]
-  if not np.all(np.isfinite(values)):
-    return False, "not finite"
-  if name == "CudnnRNNV3":
-    lengths = np.asarray(kwargs["sequence_lengths"])
-    beyond = 0.0
-    for row, length in enumerate(lengths):
-      if length < values.shape[0]:
-        beyond = max(beyond, float(np.max(np.abs(values[int(length):, row]))))
-    if beyond != 0.0:
-      return False, f"emits {beyond:.2e} past a sequence's length"
-    return True, "finite, and silent past each sequence's length"
-  return True, "finite"
 
 
 def check_last_few(name, kwargs, outputs):
@@ -436,18 +369,10 @@ def check_no_cpu(name, kwargs, outputs):
                                      fft_length=kwargs["fft_length"]).numpy()
     worst = float(np.max(np.abs(first - reference)))
     return worst < 1e-4, f"agrees with IRFFT2D to {worst:.2e}"
-  # The collectives over one device: the output is the input.
-  source = kwargs["input"]
-  if isinstance(source, list):
-    source = source[0]
-  worst = float(np.max(np.abs(first - np.asarray(source))))
-  return worst == 0.0, f"copies its input exactly ({worst:.2e})"
-
-
-BY_IDENTITY = {
-    "Lu": check_lu,
-    "SelfAdjointEigV2": check_self_adjoint_eig,
-}
+  # Every op here is named above. Anything added to no_cpu_reference without
+  # a property stated for it has to fail rather than pass silently, which is
+  # what a sweep that cannot compare against the CPU is for.
+  return False, "no property is stated for this op"
 
 
 def invalid_constraints(ops):
@@ -482,8 +407,15 @@ def invalid_constraints(ops):
   return found
 
 
+# Ops checked against a property rather than against a CPU result, recorded as
+# they are checked. Used to tell "no error row because there is nothing to
+# compare against" from "no error row because nothing was measured".
+CHECKED_BY_PROPERTY = set()
+
+
 def check_internal_without_cpu(name, inputs, outputs):
   """Properties for the internal ops TensorFlow has no CPU kernel for."""
+  CHECKED_BY_PROPERTY.add(name)
   if not outputs:
     return True, "runs and produces nothing, which is its whole job"
   if name == "_FusedBatchNormGradEx":
@@ -509,15 +441,6 @@ def check_internal_without_cpu(name, inputs, outputs):
           epsilon=1e-3, is_training=False)[0].numpy()
     worst = float(np.max(np.abs(outputs[0] - plain)))
     return worst < 1e-4, f"agrees with FusedBatchNormV3 to {worst:.2e}"
-  if name == "_NcclBroadcastRecv":
-    # Its input is a shape; what it produces should be what the matching send
-    # parked, which is the tensor the send recipe was given.
-    wanted = tuple(int(v) for v in np.asarray(inputs[0]))
-    if outputs[0].shape != wanted:
-      return False, f"produces {outputs[0].shape}, wanted {wanted}"
-    sent = np.asarray(INTERNAL["_NcclBroadcastSend"][0][0])
-    worst = float(np.max(np.abs(outputs[0] - sent)))
-    return worst == 0.0, f"receives exactly what was sent ({worst:.1e})"
   source = np.asarray(inputs[0])
   same = (outputs[0].shape == source.shape
           and float(np.max(np.abs(outputs[0] - source))) == 0.0)
@@ -560,11 +483,34 @@ OPAQUE_OUTPUTS = {
 }
 
 
-def compare(cpu, gpu, op_name=""):
+# What each op's GPU result cost it against the CPU, filled in by compare().
+# Keyed by op name; see error_table() for what is done with it.
+ERRORS = {}
+
+# Below this the relative error is not a meaningful number: dividing a
+# rounding difference by a value that is itself rounding noise reports a
+# relative error of one for two answers that agree perfectly well. Elements
+# whose CPU value is smaller than this are counted and excluded, rather than
+# quietly folded into the maximum.
+RELATIVE_FLOOR = 1e-6
+
+
+def compare(cpu, gpu, op_name="", record=True):
+  """Compares two results, and records how far apart they were.
+
+  Returns (ok, detail). The error figures go into ERRORS rather than into the
+  return value, so that every caller records them without having to.
+  """
   if len(cpu) != len(gpu):
     return False, "different output counts"
   skip = OPAQUE_OUTPUTS.get(op_name, ())
   worst = 0.0
+  worst_relative = 0.0
+  below_floor = 0
+  compared = 0
+  dtypes = []
+  failure = None
+
   for index, (a, b) in enumerate(zip(cpu, gpu)):
     if index in skip:
       continue
@@ -573,14 +519,99 @@ def compare(cpu, gpu, op_name=""):
     if a.dtype.kind in "fc":
       if not np.all(np.isfinite(a)):
         continue
-      worst = max(worst, float(np.max(np.abs(a - b))) if a.size else 0.0)
-      if not np.allclose(a, b, rtol=1e-3, atol=1e-3, equal_nan=True):
+      dtypes.append(str(a.dtype))
+      compared += a.size
+      if a.size:
+        difference = np.abs(a - b)
+        worst = max(worst, float(np.max(difference)))
+        magnitude = np.abs(a)
+        large = magnitude >= RELATIVE_FLOOR
+        below_floor += int(np.count_nonzero(~large))
+        if np.any(large):
+          worst_relative = max(
+              worst_relative,
+              float(np.max(difference[large] / magnitude[large])))
+      if failure is None and not np.allclose(a, b, rtol=1e-3, atol=1e-3,
+                                             equal_nan=True):
         # Which output, because an op with six of them says nothing useful
         # otherwise.
-        return False, f"output {index} differs by {worst:.3e}"
+        failure = f"output {index} differs by {worst:.3e}"
     elif not np.array_equal(a, b):
-      return False, f"output {index} differs in value"
-  return True, f"max diff {worst:.2e}"
+      dtypes.append(str(a.dtype))
+      if failure is None:
+        failure = f"output {index} differs in value"
+
+  if record and op_name:
+    ERRORS[op_name] = {
+        "max_abs": worst,
+        "max_rel": worst_relative,
+        "dtypes": sorted(set(dtypes)),
+        "shapes": [list(a.shape) for a in gpu],
+        "elements": compared,
+        "below_relative_floor": below_floor,
+        "ok": failure is None,
+    }
+
+  if failure is not None:
+    return False, failure
+  if compared:
+    return True, f"max abs {worst:.2e}, max rel {worst_relative:.2e}"
+  return True, "exact"
+
+
+def error_table(results):
+  """The per-op error rows, worst absolute error first.
+
+  Phase 1 asks that every op carry a row here, so an op with no row is as much
+  a finding as an op with a large one: it means nothing numeric was compared,
+  which for a float kernel means the sweep is not actually testing it.
+  """
+  rows = []
+  for name in sorted(ERRORS):
+    if results.get(name) not in (MATCH, MISMATCH):
+      continue
+    rows.append((name, ERRORS[name]))
+  rows.sort(key=lambda row: row[1]["max_abs"], reverse=True)
+  return rows
+
+
+def write_report(path, rows, results):
+  """Writes the error table as markdown, for BENCHMARKS.md and for review."""
+  with open(path, "w") as report:
+    report.write("# Per-op numeric error against the CPU\n\n")
+    report.write(
+        "Generated by `make sweep`. Do not edit by hand.\n\n"
+        "Every op is run once on the GPU and once on the CPU kernel for the "
+        "same op, with identical inputs and soft placement off, and this is "
+        "how far apart the two answers were. Sorted by absolute error.\n\n"
+        f"Relative error ignores elements whose CPU value is below "
+        f"{RELATIVE_FLOOR:g}, because dividing a rounding difference by a "
+        "value that is itself rounding noise reports a relative error of one "
+        "for two answers that agree perfectly well. The count of elements "
+        "excluded that way is the last column, so the exclusion is visible "
+        "rather than silent.\n\n"
+        "A few rows move slightly between runs on otherwise identical inputs. "
+        "The gradient kernels that accumulate through atomics, the Dilation2D "
+        "and CropAndResize gradients among them, add their contributions in "
+        "whatever order the GPU schedules them, and floating point addition "
+        "is not associative. A row that moves in the last digit or two is "
+        "that, not a regression.\n\n")
+    report.write("| Op | dtypes | max abs error | max rel error | "
+                 "elements | below rel floor |\n")
+    report.write("| --- | --- | ---: | ---: | ---: | ---: |\n")
+    for name, row in rows:
+      flag = "" if row["ok"] else " (MISMATCH)"
+      report.write(
+          f"| `{name}`{flag} | {', '.join(row['dtypes']) or 'n/a'} | "
+          f"{row['max_abs']:.3e} | {row['max_rel']:.3e} | "
+          f"{row['elements']} | {row['below_relative_floor']} |\n")
+    missing = sorted(n for n, v in results.items()
+                     if v in (MATCH, MISMATCH) and n not in ERRORS)
+    if missing:
+      report.write(f"\n{len(missing)} ops carry no row. They are checked "
+                   f"against a property rather than against a CPU result, "
+                   f"because they have no CPU kernel or no deterministic "
+                   f"answer: {', '.join(missing)}\n")
 
 
 def main():
@@ -590,15 +621,33 @@ def main():
                       default=os.path.join(ROOT, "build",
                                            "libmetal_plugin.dylib"))
   parser.add_argument("--only", default=None)
+  parser.add_argument("--report", default=None,
+                      help="write the per-op error table to this file, as "
+                           "markdown")
+  parser.add_argument("--worst", type=int, default=15,
+                      help="how many rows of the error table to print")
   args = parser.parse_args()
 
-  load_library.load_pluggable_device_library(args.plugin)
+  # Not if TensorFlow already loaded it from site-packages/tensorflow-plugins:
+  # registering the same platform twice is a CHECK failure, not an error, and
+  # it takes the process down.
+  if not tf.config.list_physical_devices("GPU"):
+    load_library.load_pluggable_device_library(args.plugin)
   tf.config.set_soft_device_placement(False)
   devices = [d.name for d in tf.config.list_physical_devices("GPU")]
   if not devices:
     print("no GPU device after loading the plugin, nothing to sweep")
     return 1
   print(f"sweeping against {devices[0]}")
+  global RESOURCE_API, RESOURCE
+  RESOURCE_API = recipes.resource_variable_api_available()
+  if RESOURCE_API:
+    RESOURCE = recipes.resource_variables()
+  print("resource variable kernel C API: "
+        + ("exported, so the ops that need it are swept"
+           if RESOURCE_API else
+           "not exported, so the ops that need it are not registered"))
+
   global NAMED, RANDOM, NO_CPU
   NAMED = by_name()
   NAMED.update(recipes.build())
@@ -606,10 +655,8 @@ def main():
   NAMED.update(recipes.gradients_and_rest())
   RANDOM = recipes.nondeterministic()
   NO_CPU = recipes.no_cpu_reference()
-  NO_CPU.update(recipes.cudnn_rnn_checks())
   last = recipes.last_few()
   NO_CPU.update(last)
-  NO_CPU.update(recipes.recurrent_backprops())
   global LAST_FEW
   LAST_FEW = set(last)
   global INTERNAL
@@ -637,16 +684,6 @@ def main():
   for name in ops:
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
-      # A receive has nothing to collect until its send has run. The pair is
-      # the point of the split form, so the sweep runs both.
-      prelude = PRELUDE.get(name)
-      if prelude and prelude in INTERNAL:
-        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
-        for device in ("/GPU:0", "/CPU:0"):
-          try:
-            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
-          except Exception:  # pylint: disable=broad-except
-            pass
       try:
         gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
                                         "/GPU:0"))
@@ -676,36 +713,41 @@ def main():
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      if name.startswith("CudnnRNN"):
-        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
-      elif name in LAST_FEW:
+      if name in LAST_FEW:
         ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
-    if name in recipes.REMOVED_FROM_GRAPHDEF:
-      results[name] = REMOVED
-      details[name] = "TensorFlow removed this op; no device can run it"
+    if name in RESOURCE:
+      # The recipe builds its own variables, so it runs inside the device
+      # scope rather than being handed tensors made somewhere else.
+      try:
+        with tf.device("/GPU:0"):
+          gpu = flatten_deep(RESOURCE[name]())
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      with tf.device("/CPU:0"):
+        cpu = flatten_deep(RESOURCE[name]())
+      ok, detail = compare(cpu, gpu, name)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = detail
       continue
-    if name in recipes.NEEDS_UNEXPORTED_C_API:
-      results[name] = OUT_OF_TREE
-      details[name] = ("needs kernel C API entry points a released "
-                       "TensorFlow does not export")
+
+    if name in recipes.NEEDS_UNEXPORTED_C_API and not RESOURCE_API:
+      results[name] = NO_ENTRY_POINTS
+      details[name] = ("needs kernel C API entry points this TensorFlow "
+                       "does not export")
+      continue
+    if name in recipes.NOT_REACHABLE_FROM_EAGER:
+      results[name] = NOT_EAGER
+      details[name] = recipes.NOT_REACHABLE_FROM_EAGER[name]
       continue
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
-      # A receive has nothing to collect until its send has run. The pair is
-      # the point of the split form, so the sweep runs both.
-      prelude = PRELUDE.get(name)
-      if prelude and prelude in INTERNAL:
-        pre_inputs, pre_attrs, pre_outputs = INTERNAL[prelude]
-        for device in ("/GPU:0", "/CPU:0"):
-          try:
-            run_internal(prelude, pre_inputs, pre_attrs, pre_outputs, device)
-          except Exception:  # pylint: disable=broad-except
-            pass
       try:
         gpu = flatten_deep(run_internal(name, inputs, attrs, num_outputs,
                                         "/GPU:0"))
@@ -735,9 +777,7 @@ def main():
         results[name] = GPU_ERROR
         details[name] = str(error).splitlines()[0][:110]
         continue
-      if name.startswith("CudnnRNN"):
-        ok, detail = check_cudnn_rnn(name, kwargs, gpu)
-      elif name in LAST_FEW:
+      if name in LAST_FEW:
         ok, detail = check_last_few(name, kwargs, gpu)
       else:
         ok, detail = check_no_cpu(name, kwargs, gpu)
@@ -796,20 +836,17 @@ def main():
       results[name] = GPU_ERROR
       details[name] = f"second call: {str(error).splitlines()[0][:90]}"
       continue
-    stable, detail = compare(gpu, again, name)
+    stable, detail = compare(gpu, again, name, record=False)
     if not stable:
       results[name] = MISMATCH
       details[name] = f"not repeatable: {detail}"
       continue
 
-    if name in BY_IDENTITY:
-      ok, detail = BY_IDENTITY[name](kwargs, gpu)
-    else:
-      ok, detail = compare(cpu, gpu, name)
+    ok, detail = compare(cpu, gpu, name)
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
-  order = [MISMATCH, GPU_ERROR, MATCH, REMOVED, OUT_OF_TREE, UNEXERCISED,
+  order = [MISMATCH, GPU_ERROR, MATCH, NO_ENTRY_POINTS, NOT_EAGER, UNEXERCISED,
            NO_RECIPE]
   counts = {k: 0 for k in order}
   for value in results.values():
@@ -829,11 +866,41 @@ def main():
       for n in named:
         print(f"  {n:38s} {details[n]}")
 
+  rows = error_table(results)
+  if rows:
+    shown = rows[: args.worst] if args.worst > 0 else rows
+    print(f"\n=== worst numeric error, {len(shown)} of {len(rows)} ops "
+          f"(relative error ignores elements below {RELATIVE_FLOOR:g})")
+    print(f"  {'op':32s} {'dtypes':17s} {'max abs':>10s} {'max rel':>10s}")
+    for name, row in shown:
+      print(f"  {name:32s} {','.join(row['dtypes'])[:17]:17s} "
+            f"{row['max_abs']:10.2e} {row['max_rel']:10.2e}")
+
+  # Some ops have no CPU kernel to compare against, or no deterministic answer
+  # to compare: a random draw, an n-dimensional transform TensorFlow only
+  # implements on a GPU. Those are checked against a property instead, so they
+  # carry no error row by design.
+  #
+  # An op outside that set with no row is the finding: it passed without
+  # anything numeric being measured, which looks like a pass and is not one.
+  by_property = set(NO_CPU) | set(RANDOM) | CHECKED_BY_PROPERTY
+  unmeasured = sorted(n for n, v in results.items()
+                      if v in (MATCH, MISMATCH) and n not in ERRORS
+                      and n not in by_property)
+  if unmeasured:
+    print(f"\n=== passed without measuring anything ({len(unmeasured)})")
+    print(f"  {', '.join(unmeasured)}")
+
+  if args.report:
+    write_report(args.report, rows, results)
+    print(f"\nwrote {args.report}")
+
   print("\n=== summary")
   for kind in order:
     print(f"  {kind:22s} {counts[kind]}")
   print(f"  {'duplicates':22s} {len(duplicates)}")
   print(f"  {'wrong-attr constraints':22s} {len(wrong_attrs)}")
+  print(f"  {'error rows recorded':22s} {len(rows)}")
   return (1 if counts[MISMATCH] or counts[GPU_ERROR] or duplicates
           or wrong_attrs else 0)
 

@@ -2,8 +2,11 @@
 # TensorFlow the installing interpreter has, so the sdist has to carry
 # everything the build needs.
 include Makefile
+# setup.py and the Makefile both read this, so a build from an sdist needs it.
+include TF_SUPPORTED_VERSION
 include LICENSE
 include README.md
+include BENCHMARKS.md
 recursive-include src *.cc *.h *.mm
 recursive-include tools *.sh *.py
 recursive-include tensorflow-plugins *.py

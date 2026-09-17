@@ -15,9 +15,21 @@ TF_INCLUDE ?= $(shell $(PYTHON) -c "import tensorflow as tf; print(tf.sysconfig.
 TF_LIB ?= $(shell $(PYTHON) -c "import tensorflow as tf; print(tf.sysconfig.get_lib())" 2>/dev/null)
 
 ifeq ($(strip $(TF_INCLUDE)),)
-$(error TensorFlow was not found. Install it first, or pass TF_INCLUDE and \
-TF_LIB explicitly)
+$(error TensorFlow was not found by $(PYTHON). Install it there, point PYTHON \
+at an interpreter that has it, or pass TF_INCLUDE and TF_LIB explicitly. Note \
+that make resolves a bare `python3` through /bin/sh, which need not be the \
+one an interactive shell gives you)
 endif
+# The one TensorFlow release this plugin is built and tested against.
+#
+# Kept in a file rather than repeated here, in setup.py and in CI, because
+# three copies of a pinned version is three chances for them to disagree, and
+# the PluggableDevice C API gives no second chance: the structs crossing the
+# boundary are matched by struct_size, so a plugin compiled against different
+# headers than the TensorFlow loading it fails in ways that say nothing about
+# the cause. The plugin checks this at load, see plugin_init.cc.
+TF_SUPPORTED_VERSION := $(shell cat TF_SUPPORTED_VERSION)
+
 SDK := $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 
 BUILD := build
@@ -57,12 +69,22 @@ endif
 # field to a struct recompiled only the file it was declared in and left the
 # rest reading the old layout, which shows up as a stream reporting a failure
 # that never happened.
+# macOS 15, because that is what the code already requires. The backend
+# aliases an MTLBuffer through MPSNDArray with -initWithBuffer:offset:
+# descriptor:, which arrived in macOS 15 and which nothing here guards or
+# falls back from; without it there is no zero-copy path at all. Claiming 13.0
+# meant the compiler warned twenty times about calling APIs newer than the
+# target and then built a library that would have met an unrecognised selector
+# on the first convolution.
+MACOS_MIN := 15.0
+
 CXXFLAGS := -std=c++17 -O2 -fPIC -isysroot $(SDK) $(COMPAT) -MMD -MP \
-            -mmacosx-version-min=13.0 \
+            -mmacosx-version-min=$(MACOS_MIN) \
             -Isrc -I$(TF_INCLUDE) \
             -I$(TF_INCLUDE)/external/farmhash_archive/src \
             -DNDEBUG -DTF_METAL_OUT_OF_TREE \
-            -DTF_CAPI_WEAK
+            -DTF_CAPI_WEAK \
+            -DTF_METAL_SUPPORTED_TF_VERSION=\"$(TF_SUPPORTED_VERSION)\"
 
 FRAMEWORKS := -framework Metal -framework MetalPerformanceShaders \
               -framework MetalPerformanceShadersGraph -framework Foundation
@@ -77,12 +99,17 @@ FRAMEWORKS := -framework Metal -framework MetalPerformanceShaders \
 # first call, so an ordinary reference to one of those would make dlopen fail
 # outright. Weak references bind to null instead, and the kernels that need
 # them are not registered when they are null (see ResourceVariableApiAvailable).
-LDFLAGS := -dynamiclib $(FRAMEWORKS) \
+# The deployment target has to be repeated here. CXXFLAGS does not reach the
+# link, and without it ld stamps LC_BUILD_VERSION with the version of the
+# machine doing the build, so a dylib built on a current Mac claimed to need
+# that Mac's macOS and dyld would refuse to load it anywhere older.
+LDFLAGS := -dynamiclib -mmacosx-version-min=$(MACOS_MIN) $(FRAMEWORKS) \
            -L$(TF_LIB) -ltensorflow_framework.2 \
            -Wl,-undefined,dynamic_lookup \
            -Wl,-rpath,$(TF_LIB)
 
-.PHONY: all clean test test-stream sweep install
+.PHONY: all clean test test-stream test-load test-install sweep kernels \
+        benchmark install
 
 all: $(OUT)
 
@@ -91,7 +118,7 @@ $(OUT): $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $@
 	@echo "built $@"
 
-$(BUILD)/%.o: src/% $(STAMP)
+$(BUILD)/%.o: src/% $(STAMP) TF_SUPPORTED_VERSION
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -101,6 +128,12 @@ check-symbols: $(OUT)
 
 test: $(OUT) test-stream
 	$(PYTHON) tests/run_tests.py
+
+# Separate from `test`, because it rebuilds the library twice to produce one
+# compiled against a different TensorFlow, and that is minutes rather than
+# seconds. Run it when anything about loading or the version pin changes.
+test-load: $(OUT)
+	$(PYTHON) tests/load_modes_test.py
 
 # The StreamExecutor C API driven directly, without TensorFlow. Reaches what
 # no op can: memset32 with a pattern that is not four equal bytes has one
@@ -115,11 +148,37 @@ test-stream: $(BUILD)/stream_executor_test
 	$(BUILD)/stream_executor_test $(OUT)
 
 # Every registered op, through TensorFlow's own dispatch, against the CPU.
+#
+# Writes the per-op error table to docs/op_errors.md as well as printing the
+# worst of it, so that a change in the numerics shows up as a diff rather than
+# as something someone has to have been watching the terminal for.
 sweep: $(OUT)
-	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py
+	PYTHONPATH=tools $(PYTHON) tools/op_sweep.py --report docs/op_errors.md
+
+# The same work on both devices, and whether the GPU is worth it. Runs the
+# whole suite five times, because the variance that matters on a laptop is
+# between runs rather than within one.
+benchmark: $(OUT)
+	$(PYTHON) benchmarks/benchmark.py --plugin $(OUT) --repeats 5 \
+	  --report BENCHMARKS.md
+
+# Regenerates the table of what the plugin registers, and the op list the
+# sweep iterates, by asking TensorFlow rather than by anyone remembering to
+# update them. Run it after adding or removing a kernel.
+kernels: $(OUT)
+	$(PYTHON) tools/dump_kernels.py
 
 install: $(OUT)
 	$(PYTHON) -m pip install .
+
+# The package as a user receives it: installed, and then asked what devices
+# exist. Everything under `test` loads the freshly built dylib by hand, which
+# proves the kernels and proves nothing about the packaging: a wheel that puts
+# the shared object in the wrong directory passes all of it and fails the only
+# step a user performs. This installs into $(PYTHON), so point it at a
+# throwaway environment if that matters.
+test-install: install
+	$(PYTHON) tests/installed_test.py
 
 clean:
 	rm -rf $(BUILD)

@@ -107,10 +107,41 @@ MPSGraphTensor* ApplyCompare(MPSGraph* g, CompareKind k, MPSGraphTensor* a,
       return [g greaterThanOrEqualToWithPrimaryTensor:a
                                       secondaryTensor:b
                                                  name:nil];
-    case CompareKind::kLogicalAnd:
-      return [g logicalANDWithPrimaryTensor:a secondaryTensor:b name:nil];
-    case CompareKind::kLogicalOr:
-      return [g logicalORWithPrimaryTensor:a secondaryTensor:b name:nil];
+    // Both of these are arithmetic on floats rather than MPSGraph's own
+    // logical operators, and the reason is what those operators print.
+    // MPSGraph tries to place an op on a boolean tensor onto the Neural
+    // Engine, the Neural Engine casts only between F16 and F32, and the
+    // attempt fails and reports itself:
+    //
+    //   warning: loc("mps_and"(...)): failed: ANE I/O op can only do
+    //   F16 MemRef <-> F32 Tensor cast
+    //
+    // Nine lines per compiled graph, on stderr, in front of a user who has
+    // done nothing wrong. Measured on an M4 Max over four million elements,
+    // the float spelling is not slower: 0.29 ms against 0.29 ms. `minimum`
+    // on booleans warns in the same way, and `bitwiseAND` on booleans fails
+    // an assertion inside MPSGraph, so this is the spelling that is left.
+    //
+    // A TensorFlow boolean holds 0 or 1, so a product is true exactly when
+    // both sides are, and a maximum is true exactly when either is.
+    case CompareKind::kLogicalAnd: {
+      MPSGraphTensor* af = [g castTensor:a toType:MPSDataTypeFloat32 name:nil];
+      MPSGraphTensor* bf = [g castTensor:b toType:MPSDataTypeFloat32 name:nil];
+      return [g castTensor:[g multiplicationWithPrimaryTensor:af
+                                             secondaryTensor:bf
+                                                        name:nil]
+                    toType:MPSDataTypeBool
+                      name:nil];
+    }
+    case CompareKind::kLogicalOr: {
+      MPSGraphTensor* af = [g castTensor:a toType:MPSDataTypeFloat32 name:nil];
+      MPSGraphTensor* bf = [g castTensor:b toType:MPSDataTypeFloat32 name:nil];
+      return [g castTensor:[g maximumWithPrimaryTensor:af
+                                       secondaryTensor:bf
+                                                  name:nil]
+                    toType:MPSDataTypeBool
+                      name:nil];
+    }
     case CompareKind::kApproximateEqual: {
       // |a - b| < tolerance, strictly, which is how TensorFlow defines it.
       MPSGraphTensor* d = [g absoluteWithTensor:
@@ -255,7 +286,18 @@ void LogicalNot_ComputeImpl(DTypeOp* op, TF_OpKernelContext* ctx,
                                                     dataType:MPSDataTypeBool
                                                         name:nil];
         [out->inputs addObject:x];
-        [out->outputs addObject:[out->graph notWithTensor:x name:nil]];
+        // Not `notWithTensor:`, for the reason under ApplyCompare: an
+        // MPSGraph op on a boolean tensor prints six lines about the Neural
+        // Engine before falling back. Comparing against zero in float is the
+        // same function, and it says nothing.
+        MPSGraphTensor* xf = [out->graph castTensor:x
+                                             toType:MPSDataTypeFloat32
+                                               name:nil];
+        MPSGraphTensor* zero = [out->graph constantWithScalar:0.0
+                                                     dataType:MPSDataTypeFloat32];
+        [out->outputs addObject:[out->graph equalWithPrimaryTensor:xf
+                                                   secondaryTensor:zero
+                                                              name:nil]];
       },
       status);
   if (cached == nullptr) return;

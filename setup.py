@@ -35,6 +35,13 @@ from setuptools.dist import Distribution
 
 HERE = Path(__file__).resolve().parent
 
+# The single source of truth for which TensorFlow this plugin supports, shared
+# with the Makefile and with CI. A PluggableDevice is matched to its host by
+# struct_size rather than by a version negotiation it could fail gracefully,
+# so the supported range is one minor release and is declared as one.
+TF_VERSION = (HERE / "TF_SUPPORTED_VERSION").read_text().strip()
+TF_MAJOR_MINOR = ".".join(TF_VERSION.split(".")[:2])
+
 
 def tensorflow_paths():
   """Where TensorFlow's headers and libraries are.
@@ -88,9 +95,17 @@ class BinaryDistribution(Distribution):
 
 
 setup(
-    name="tensorflow-metal-plugin",
-    version="0.2.0",
-    description="Metal GPU backend for TensorFlow on Apple silicon",
+    # Not "tensorflow-metal-plugin", and not anything else one hyphen away
+    # from Apple's abandoned `tensorflow-metal`: PyPI normalises names, the
+    # two would sit next to each other in any listing, and a user installing
+    # the wrong one gets a package whose last release predates three
+    # TensorFlow minors. This name says what it is instead of borrowing.
+    name="metal-pluggable-device",
+    version="0.3.0",
+    description=("Metal GPU backend for TensorFlow on Apple silicon, as an "
+                 "out-of-tree PluggableDevice"),
+    keywords=["tensorflow", "metal", "apple-silicon", "pluggabledevice",
+              "gpu"],
     long_description=(HERE / "README.md").read_text(),
     long_description_content_type="text/markdown",
     license="Apache-2.0",
@@ -100,15 +115,18 @@ setup(
         "Issues": "https://github.com/IPNP-BIPN/tensorflow-metal-plugin/issues",
     },
     python_requires=">=3.10",
-    # Bounded on both sides on purpose. The plugin is compiled against the
-    # PluggableDevice C API of whichever TensorFlow is installed, and that
-    # API negotiates versions through `struct_size` fields that change
-    # between releases. An unbounded upper edge means a TensorFlow released
-    # after this one silently becomes the thing users build against, and
-    # the failure surfaces as a struct-size assertion at load time rather
-    # than as a resolver error at install time. Raise the ceiling only once
-    # CI has actually built and tested against the new release.
-    install_requires=["tensorflow>=2.16,<2.22"],
+    # One release, not a range. The plugin is compiled against the
+    # PluggableDevice C API of whichever TensorFlow the target interpreter
+    # has, and that API negotiates through `struct_size` fields that move
+    # between releases: a mismatch surfaces as an assertion inside TensorFlow
+    # at load, far from the thing that caused it. A ceiling turns that into a
+    # resolver error at install time, which is better, and an exact minor
+    # turns it into a resolver error in the other direction too, which is
+    # better again. The plugin also refuses at load to run against a minor it
+    # was not built for, so a wider range here would only move the failure
+    # later. Moving the pin is what TF_SUPPORTED_VERSION and the weekly job
+    # against the newest release are for.
+    install_requires=[f"tensorflow=={TF_MAJOR_MINOR}.*"],
     # tensorflow-plugins is the directory TensorFlow scans at import, so that
     # is where the shared object has to land. Declaring it as a package is
     # what makes the wheel carry it; data_files would not, since those install

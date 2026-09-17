@@ -1,14 +1,12 @@
 name: Metal plugin
 
-# Kept alongside the plugin rather than in .github/workflows, because
-# TensorFlow's CI has no Apple silicon GPU runner to run it on. Copy it there,
-# or run the same three steps by hand, on a machine that has one:
+# Needs an Apple silicon runner with a GPU, which is the thing an out-of-tree
+# plugin can test and TensorFlow's own CI cannot: the Metal shaders compiled by
+# the Metal runtime, and the kernels executed on a real device.
+#
+# The same three steps by hand:
 #
 #   make -j4 && make check-symbols && make test
-#
-# That is the thing an out-of-tree plugin can offer that TensorFlow's own CI
-# cannot: the Metal shaders compiled by the Metal runtime, and the kernels
-# executed on a real GPU.
 on:
   push:
     branches: [main]
@@ -36,14 +34,18 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install TensorFlow
+        # The pinned release, not the newest one. A floating install would mean
+        # CI never actually exercises the version the package declares, and the
+        # first report of a break would come from a user.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "tensorflow>=2.16" numpy pytest
+          python -m pip install "tensorflow==$(cat TF_SUPPORTED_VERSION)" numpy pytest
 
       - name: Report what we are building against
         run: |
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
+          echo "pinned to $(cat TF_SUPPORTED_VERSION)"
           python -c "import tensorflow as tf; print(tf.__version__); print(tf.sysconfig.get_include()); print(tf.sysconfig.get_lib())"
           sw_vers
           system_profiler SPDisplaysDataType | head -20
@@ -62,3 +64,60 @@ jobs:
 
       - name: Run on-device tests
         run: make PYTHON=$(which python) test
+
+      - name: Check the generated tables are current
+        # docs/kernels.md and the sweep's op list are generated from the kernel
+        # registry. Regenerating them here and demanding no diff is what keeps
+        # "generated" true: a kernel added without running `make kernels` would
+        # otherwise leave the table describing the tree as it used to be, and
+        # leave the sweep never calling the new op.
+        run: |
+          make PYTHON=$(which python) kernels
+          git diff --exit-code docs/kernels.md tools/metal_ops.txt
+
+      - name: Sweep every registered op against the CPU
+        # Thirty seconds, and the only step that compares arithmetic. The build
+        # and the on-device harness both pass against a kernel that returns
+        # plausible wrong numbers.
+        #
+        # docs/op_errors.md is regenerated as a side effect and is deliberately
+        # not diffed: a few rows move in the last digits between runs, which
+        # the file says at the top of itself.
+        run: make PYTHON=$(which python) sweep
+
+      - name: Benchmark against the CPU
+        # Recorded, never a gate. A shared runner throttles and shares its
+        # memory bandwidth, so its ratios say nothing next to a quiet laptop's,
+        # and the tool says as much about a single run. What it is good for is
+        # having somewhere for a change that makes the GPU path slower to show
+        # up, on hardware nobody has to own.
+        run: |
+          python benchmarks/benchmark.py --plugin build/libmetal_plugin.dylib \
+            --repeats 1 --runs 10 --report ci-benchmarks.md
+          cat ci-benchmarks.md
+
+      - name: Keep the benchmark table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-python-${{ matrix.python }}
+          path: ci-benchmarks.md
+          if-no-files-found: warn
+
+      - name: Check how the plugin declines to load
+        # Rebuilds twice, so it is late: everything above has already run
+        # against the library the pin describes.
+        run: make PYTHON=$(which python) test-load
+
+      - name: Install the package and use it as a user would
+        # Last, and it has to be last. TensorFlow loads everything in
+        # site-packages/tensorflow-plugins at import, so from here on the
+        # plugin is already registered in this interpreter, and any step that
+        # loads the dylib by hand would register the METAL platform twice.
+        # That is a CHECK failure inside TensorFlow, not an error it returns,
+        # so it takes the process down.
+        #
+        # This is also the one step a user actually performs. Everything above
+        # loads the dylib by hand, so a wheel that puts it anywhere other than
+        # tensorflow-plugins would pass all of it and fail here.
+        run: make PYTHON=$(which python) test-install
