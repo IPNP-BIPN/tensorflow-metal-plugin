@@ -385,11 +385,12 @@ package can promise:
 * **The profiler** (`metal_profiler.{h,mm}`). Reports command buffers rather
   than kernels, so anything the runtime issues on its own shows up as
   `unnamed`. Making that name the op would make the timeline usable.
-* **The resource variable C API.** Fifteen ops, every optimiser among them,
-  are not registered because a released TensorFlow does not export the entry
-  points they need. That fix is upstream, in
-  [#126377](https://github.com/tensorflow/tensorflow/pull/126377), and it is
-  worth more than any kernel in this repository.
+* **Reference variables and the rewritten ops.** `Assign`, `AssignAdd` and
+  `AssignSub` take a reference variable, which eager refuses to call at all,
+  and `ParallelConcat` is meant to be replaced by a graph rewrite before its
+  kernel is reached. Six ops whose behaviour is stated here rather than
+  measured, because the sweep is an eager harness. Reaching them would take a
+  v1 graph and a session.
 * **Hardware that is not an M4 Max.** Every number in
   [BENCHMARKS.md](BENCHMARKS.md) comes from one laptop. M1, M2, M3, the Ultra
   parts and the Mac Studio thermal envelope are all unmeasured.

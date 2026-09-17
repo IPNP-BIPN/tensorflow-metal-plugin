@@ -164,9 +164,11 @@ own. Registering them again here would add nothing.
   API cannot reach. On a unified memory device the pinning costs a memcpy
   rather than a transfer, but the arithmetic itself is on the CPU. This is the
   same missing C API as
-  [#126374](https://github.com/tensorflow/tensorflow/issues/126374) and is not
-  fixable from inside a plugin; the proposed fix is
-  [#126377](https://github.com/tensorflow/tensorflow/pull/126377).
+  [#126374](https://github.com/tensorflow/tensorflow/issues/126374), which is
+  not fixable from inside a plugin and which was fixed outside one:
+  [#126377](https://github.com/tensorflow/tensorflow/pull/126377) merged on
+  2026-09-10, so the entry points are exported again from 2.22.0 onward. The
+  pin here is 2.20.0, which does not have them.
 * **`ParallelConcat` is registered but always fails**, which is what every
   device does, CUDA included: the graph rewrite replaces the op with an
   allocation and one update per stacked value, so reaching the kernel means

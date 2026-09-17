@@ -3,9 +3,9 @@ name: Newest TensorFlow
 # What the version pin buys, collected weekly.
 #
 # ci.yml builds against the pinned release, which is the only thing a user
-# installs. This job builds against whatever TensorFlow is newest, with the pin
-# moved to match for the length of the run, and answers the one question the
-# pin cannot answer on its own: would moving it work.
+# installs. This job builds against whatever TensorFlow is newest, released and
+# nightly, with the pin moved to match for the length of the run, and answers
+# the one question the pin cannot answer on its own: would moving it work.
 #
 # A failure here breaks nothing a user has. It says the next release needs
 # work before the pin moves, and which of the three kinds of work: the headers
@@ -22,6 +22,19 @@ on:
 jobs:
   newest:
     runs-on: macos-15   # Apple silicon, and the SDK this code needs
+    strategy:
+      fail-fast: false
+      matrix:
+        # The released one answers "could the pin move today". The nightly
+        # answers it months earlier, which is the whole point of a job that
+        # exists to give notice: the export that unblocked fifteen ops here
+        # was merged upstream six months after the release that broke them,
+        # and would have shown up in a nightly the same week.
+        #
+        # A nightly is allowed to be broken, so it is reported and does not
+        # fail the run.
+        channel: [released, nightly]
+    continue-on-error: ${{ matrix.channel == 'nightly' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +45,11 @@ jobs:
       - name: Install the newest TensorFlow
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade tensorflow numpy
+          if [ "${{ matrix.channel }}" = "nightly" ]; then
+            python -m pip install --upgrade tf-nightly numpy
+          else
+            python -m pip install --upgrade tensorflow numpy
+          fi
 
       - name: Move the pin to it, for this run only
         # Not committed. The plugin refuses to offer a device when the loaded
