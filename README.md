@@ -34,7 +34,7 @@ the host.
 | | |
 | --- | --- |
 | Verified against the CPU kernel, or against a property where there is no CPU kernel | 268 |
-| Need kernel C API entry points a released TensorFlow does not export | 14 |
+| Need kernel C API entry points the pinned TensorFlow does not export, [fixed upstream](#it-is-fixed-upstream-and-not-yet-in-a-release) for 2.22 | 14 |
 | **Unaccounted for** | **0** |
 
 How far apart the two answers were, per op, is in
