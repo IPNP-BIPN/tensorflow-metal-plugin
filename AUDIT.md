@@ -1011,3 +1011,56 @@ available that the hand-maintained version was still correct.
    `GatherV2`, `OneHot`, `StridedSlice`, the image resizes, `TopKV2` and
    `CropAndResize`, which users would plausibly miss. The audit declined to
    guess where that line goes and so does this addendum.
+
+## Addendum: what changed on 2026-09-16 and 17
+
+The third and last of these. Everything above was written against a tree whose
+central limitation has since been lifted by somebody else.
+
+**The missing kernel C API came back.**
+[tensorflow/tensorflow#126377](https://github.com/tensorflow/tensorflow/pull/126377)
+merged on 2026-09-10, after both 2.20.0 and 2.21.0 had shipped without it. The
+audit treated the missing entry points as the standing fact that made the
+whole backend synchronous, which it was; it is now a fact about two releases
+rather than about TensorFlow. Verified against `tf-nightly 2.22.0-dev20260914`:
+all six symbols resolve, the plugin registers the fifteen ops and turns the
+synchronous mode off by itself, and nothing in this repository had to change
+for that. It is worth 1.34x on a training step and 1.71x on CNN forward at
+batch 32, which also stops that case losing to the CPU.
+
+**The benchmark table the audit quoted does not reproduce.** Measured again on
+the same machine against the same TensorFlow with no kernel changed in
+between, MatMul 2048x2048 came out at 3.55x where the committed table said
+6.43x, and the CPU time at 12.01 ms where it said 48.05 ms. Two suites in one
+session agree to within a few percent, so neither table is noisy; they
+measured different machine conditions. The generated file and the README now
+say that the reported range samples one session and that the variance between
+sessions is larger.
+
+**Three cases lose to the CPU outright**, which the audit's table did not
+show: the 4096x4096 elementwise chain at 0.47x, the 4096x4096 reduction at
+0.67x, and CNN forward at batch 32 at 0.80x. A new tool, `benchmarks/crossover.py`,
+walks each family from 32x32 to 4096x4096 and finds that the first two never
+win at any size, while MatMul crosses at 512x512. That is the cost of eager
+dispatch around a memory-bound op rather than a fault in those kernels, and
+the conclusion is to keep them: the alternative to a slow GPU op mid-graph is
+the same CPU kernel plus two transfers.
+
+**Two things the audit could not have found, both surfaced by measuring:**
+
+- Every boolean op made MPSGraph try the Neural Engine and print nine lines of
+  `ANE I/O op can only do F16 MemRef <-> F32 Tensor cast` per compiled graph.
+  The logical operators are float arithmetic now and it is silent. While
+  checking that, the GPU was confirmed to be doing all of the work: 100%
+  active residency at 47.3 W under load, with the Neural Engine rail reporting
+  nothing.
+- The sweep exempted fourteen ops from a list written by hand, so on the
+  TensorFlow that fixed them it would have reported "needs unexported api"
+  about a TensorFlow that exports them, and stopped measuring fourteen ops on
+  the day they started working. The exemption is a runtime question now, eight
+  of the fourteen have recipes and are verified against the CPU, and the six
+  that cannot be reached from eager are counted separately.
+
+**Still open**, and all four need Benjamin: publishing to PyPI, cutting further
+to the brief's op list, moving the pin to 2.22.0 when it ships, and whether the
+three losing cases change anything. They are issues 2, 3, 4 and 10.
