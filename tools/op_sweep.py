@@ -48,8 +48,12 @@ ROOT = os.path.dirname(HERE)
 
 MATCH, MISMATCH, GPU_ERROR, UNEXERCISED, NO_RECIPE = (
     "match", "mismatch", "gpu-error", "unexercised", "no-recipe")
-# Two kinds of "cannot be exercised" that are not gaps in the backend.
-OUT_OF_TREE = "needs-unexported-api"
+# Not gaps in the backend, and kept apart because the two have different
+# futures: the first disappears when a TensorFlow exports the entry points,
+# the second never does, because eager cannot call a reference variable op and
+# a rewritten op is not meant to be reached.
+NO_ENTRY_POINTS = "needs-unexported-api"
+NOT_EAGER = "not-callable-from-eager"
 
 
 def load_ops(path):
@@ -239,6 +243,10 @@ RANDOM = {}
 NO_CPU = {}
 INTERNAL = {}
 LAST_FEW = set()
+# Ops whose recipe is a callable rather than an argument dictionary, because
+# they need a resource variable and a resource is bound to the device that
+# created it. Populated only when the entry points they need are exported.
+RESOURCE = {}
 # Whether this TensorFlow exports the resource variable entry points, which
 # decides whether the ops that need them are an exemption or fourteen more ops
 # to verify. Set in main, once the plugin is loaded.
@@ -631,8 +639,10 @@ def main():
     print("no GPU device after loading the plugin, nothing to sweep")
     return 1
   print(f"sweeping against {devices[0]}")
-  global RESOURCE_API
+  global RESOURCE_API, RESOURCE
   RESOURCE_API = recipes.resource_variable_api_available()
+  if RESOURCE_API:
+    RESOURCE = recipes.resource_variables()
   print("resource variable kernel C API: "
         + ("exported, so the ops that need it are swept"
            if RESOURCE_API else
@@ -710,10 +720,31 @@ def main():
       results[name] = MATCH if ok else MISMATCH
       details[name] = f"{what}: {detail}"
       continue
+    if name in RESOURCE:
+      # The recipe builds its own variables, so it runs inside the device
+      # scope rather than being handed tensors made somewhere else.
+      try:
+        with tf.device("/GPU:0"):
+          gpu = flatten_deep(RESOURCE[name]())
+      except Exception as error:  # pylint: disable=broad-except
+        results[name] = GPU_ERROR
+        details[name] = str(error).splitlines()[0][:110]
+        continue
+      with tf.device("/CPU:0"):
+        cpu = flatten_deep(RESOURCE[name]())
+      ok, detail = compare(cpu, gpu, name)
+      results[name] = MATCH if ok else MISMATCH
+      details[name] = detail
+      continue
+
     if name in recipes.NEEDS_UNEXPORTED_C_API and not RESOURCE_API:
-      results[name] = OUT_OF_TREE
+      results[name] = NO_ENTRY_POINTS
       details[name] = ("needs kernel C API entry points this TensorFlow "
                        "does not export")
+      continue
+    if name in recipes.NOT_REACHABLE_FROM_EAGER:
+      results[name] = NOT_EAGER
+      details[name] = recipes.NOT_REACHABLE_FROM_EAGER[name]
       continue
     if name in INTERNAL:
       inputs, attrs, num_outputs = INTERNAL[name]
@@ -815,7 +846,7 @@ def main():
     results[name] = MATCH if ok else MISMATCH
     details[name] = detail
 
-  order = [MISMATCH, GPU_ERROR, MATCH, OUT_OF_TREE, UNEXERCISED,
+  order = [MISMATCH, GPU_ERROR, MATCH, NO_ENTRY_POINTS, NOT_EAGER, UNEXERCISED,
            NO_RECIPE]
   counts = {k: 0 for k in order}
   for value in results.values():

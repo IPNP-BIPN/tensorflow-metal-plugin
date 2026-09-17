@@ -26,6 +26,7 @@ finiteness, and that the values are not all identical.
 """
 
 import ctypes
+import itertools
 
 import numpy as np
 import tensorflow as tf
@@ -314,6 +315,138 @@ NEEDS_UNEXPORTED_C_API = {
     "ResourceGather", "ResourceGatherNd", "ResourceScatterUpdate",
     "ParallelConcat", "_ParallelConcatStart", "_ParallelConcatUpdate",
 }
+
+# Reachable from eager Python only through a resource handle, which is bound
+# to the device that created it. So these are callables rather than argument
+# dictionaries: the sweep runs each one inside a device scope, it builds its
+# own variables there, and what comes back is comparable between devices.
+#
+# Three of the ops in NEEDS_UNEXPORTED_C_API are absent from here on purpose.
+# Assign, AssignAdd and AssignSub take a reference variable, and TensorFlow
+# refuses those in eager outright: "assign op does not support eager
+# execution. Arg 'output_ref' is a ref". No entry point changes that, so they
+# would need a v1 graph and a session, which this sweep does not have.
+#
+# ParallelConcat and its two halves are absent for a different reason: the
+# graph rewrite replaces the op with an allocation and one update per value,
+# so reaching the kernel at all means the rewrite did not run, and the kernel
+# is supposed to fail. An op whose correct behaviour is to fail does not
+# belong in a sweep that compares answers, and both ops it is rewritten into
+# are swept here.
+
+# Registered, and not callable from this sweep. Neither reason is the kernel
+# C API, so neither is fixed by a TensorFlow that exports it.
+NOT_REACHABLE_FROM_EAGER = {
+    "Assign": "takes a reference variable, which eager refuses outright",
+    "AssignAdd": "takes a reference variable, which eager refuses outright",
+    "AssignSub": "takes a reference variable, which eager refuses outright",
+    "ParallelConcat": ("the graph rewrite replaces it, so reaching the kernel "
+                       "means the rewrite did not run and it is meant to fail"),
+    "_ParallelConcatStart": "half of a rewrite, exercised through the rewrite",
+    "_ParallelConcatUpdate": "half of a rewrite, exercised through the rewrite",
+}
+
+
+_HANDLES = itertools.count()
+
+
+def _variable(shape, values=None, dtype=tf.float32):
+  """A resource variable on whichever device is in scope, initialised."""
+  handle = tf.raw_ops.VarHandleOp(
+      dtype=dtype, shape=shape, shared_name=f"sweep_{next(_HANDLES)}")
+  if values is None:
+    values = np.zeros(shape, np.float32)
+  tf.raw_ops.AssignVariableOp(resource=handle,
+                              value=tf.constant(values, dtype))
+  return handle
+
+
+def _read(handle, dtype=tf.float32):
+  return tf.raw_ops.ReadVariableOp(resource=handle, dtype=dtype)
+
+
+def resource_variables():
+  """Ops that read or write a resource variable, one callable each.
+
+  Every one of them is seeded from the same numbers on both devices, so the
+  comparison is of arithmetic rather than of initialisation. The optimisers
+  return the variable after the update rather than nothing, which is what
+  makes them comparable at all: the ops themselves produce no output and
+  their whole effect is the mutation.
+  """
+  weights = RNG.standard_normal((4, 3), dtype=np.float32)
+  gradient = RNG.standard_normal((4, 3), dtype=np.float32)
+  table = RNG.standard_normal((6, 3), dtype=np.float32)
+  scalar = lambda v: tf.constant(v, tf.float32)
+
+  def adam():
+    var = _variable([4, 3], weights)
+    tf.raw_ops.ResourceApplyAdam(
+        var=var, m=_variable([4, 3]), v=_variable([4, 3]),
+        beta1_power=scalar(0.9), beta2_power=scalar(0.999), lr=scalar(0.01),
+        beta1=scalar(0.9), beta2=scalar(0.999), epsilon=scalar(1e-7),
+        grad=tf.constant(gradient))
+    return _read(var)
+
+  def gradient_descent():
+    var = _variable([4, 3], weights)
+    tf.raw_ops.ResourceApplyGradientDescent(
+        var=var, alpha=scalar(0.1), delta=tf.constant(gradient))
+    return _read(var)
+
+  def momentum():
+    var, accum = _variable([4, 3], weights), _variable([4, 3])
+    tf.raw_ops.ResourceApplyMomentum(
+        var=var, accum=accum, lr=scalar(0.1), grad=tf.constant(gradient),
+        momentum=scalar(0.9))
+    # Both, because a momentum update that leaves the accumulator alone still
+    # moves the variable correctly on the first step and wrongly on the next.
+    return [_read(var), _read(accum)]
+
+  def keras_momentum():
+    var, accum = _variable([4, 3], weights), _variable([4, 3])
+    tf.raw_ops.ResourceApplyKerasMomentum(
+        var=var, accum=accum, lr=scalar(0.1), grad=tf.constant(gradient),
+        momentum=scalar(0.9))
+    return [_read(var), _read(accum)]
+
+  def rms_prop():
+    var = _variable([4, 3], weights)
+    ms = _variable([4, 3], np.ones((4, 3), np.float32))
+    mom = _variable([4, 3])
+    tf.raw_ops.ResourceApplyRMSProp(
+        var=var, ms=ms, mom=mom, lr=scalar(0.1), rho=scalar(0.9),
+        momentum=scalar(0.0), epsilon=scalar(1e-7), grad=tf.constant(gradient))
+    return [_read(var), _read(ms)]
+
+  def gather():
+    return tf.raw_ops.ResourceGather(
+        resource=_variable([6, 3], table),
+        indices=tf.constant([0, 2, 5], tf.int32), dtype=tf.float32)
+
+  def gather_nd():
+    return tf.raw_ops.ResourceGatherNd(
+        resource=_variable([6, 3], table),
+        indices=tf.constant([[0], [2]], tf.int32), dtype=tf.float32)
+
+  def scatter_update():
+    var = _variable([6, 3], table)
+    tf.raw_ops.ResourceScatterUpdate(
+        resource=var, indices=tf.constant([1, 4], tf.int32),
+        updates=tf.constant(np.ones((2, 3), np.float32)))
+    return _read(var)
+
+  return {
+      "ResourceApplyAdam": adam,
+      "ResourceApplyGradientDescent": gradient_descent,
+      "ResourceApplyMomentum": momentum,
+      "ResourceApplyKerasMomentum": keras_momentum,
+      "ResourceApplyRMSProp": rms_prop,
+      "ResourceGather": gather,
+      "ResourceGatherNd": gather_nd,
+      "ResourceScatterUpdate": scatter_update,
+  }
+
 
 # The same six symbols the plugin looks for at load, looked up the same way.
 _RESOURCE_VARIABLE_ENTRY_POINTS = (
