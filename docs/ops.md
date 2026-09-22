@@ -168,7 +168,7 @@ own. Registering them again here would add nothing.
   not fixable from inside a plugin and which was fixed outside one:
   [#126377](https://github.com/tensorflow/tensorflow/pull/126377) merged on
   2026-09-10, so the entry points are exported again from 2.22.0 onward. The
-  pin here is 2.20.0, which does not have them.
+  pin here is 2.21.0, which does not have them.
 * **`ParallelConcat` is registered but always fails**, which is what every
   device does, CUDA included: the graph rewrite replaces the op with an
   allocation and one update per stacked value, so reaching the kernel means

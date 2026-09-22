@@ -101,7 +101,7 @@ setup(
     # the wrong one gets a package whose last release predates three
     # TensorFlow minors. This name says what it is instead of borrowing.
     name="metal-pluggable-device",
-    version="0.3.0",
+    version="0.4.0",
     description=("Metal GPU backend for TensorFlow on Apple silicon, as an "
                  "out-of-tree PluggableDevice"),
     keywords=["tensorflow", "metal", "apple-silicon", "pluggabledevice",
