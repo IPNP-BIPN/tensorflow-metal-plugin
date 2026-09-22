@@ -18,7 +18,7 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `Conv3DBackpropInputV2` | float32 | 6.104e-05 | 1.249e-04 | 720 | 0 |
 | `DepthwiseConv2dNativeBackpropFilter` | float32 | 3.052e-05 | 1.054e-04 | 108 | 0 |
 | `DepthwiseConv2dNativeBackpropInput` | float32 | 3.052e-05 | 3.416e-06 | 378 | 0 |
-| `Dilation2DBackpropFilter` | float32 | 2.289e-05 | 2.486e-07 | 12 | 0 |
+| `Dilation2DBackpropFilter` | float32 | 3.052e-05 | 3.315e-07 | 12 | 0 |
 | `Conv2DBackpropInput` | float32 | 1.526e-05 | 1.082e-04 | 378 | 0 |
 | `CropAndResizeGradBoxes` | float32 | 1.144e-05 | 1.768e-04 | 8 | 0 |
 | `FFT3D` | complex64 | 5.395e-06 | 1.245e-06 | 256 | 0 |
@@ -45,13 +45,14 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `Acos` | float32 | 2.384e-07 | 2.476e-07 | 30 | 0 |
 | `BatchMatMulV3` | float32 | 2.384e-07 | 1.109e-06 | 24 | 0 |
 | `Exp` | float32 | 2.384e-07 | 1.074e-07 | 30 | 0 |
-| `Expm1` | float32 | 2.384e-07 | 4.921e-07 | 30 | 0 |
+| `Expm1` | float32 | 2.384e-07 | 3.404e-07 | 30 | 0 |
 | `L2Loss` | float32 | 2.384e-07 | 7.284e-08 | 1 | 0 |
 | `Log` | float32 | 2.384e-07 | 1.139e-07 | 30 | 0 |
 | `LogSoftmax` | float32 | 2.384e-07 | 1.671e-07 | 30 | 0 |
 | `Rsqrt` | float32 | 2.384e-07 | 1.131e-07 | 30 | 0 |
 | `SqrtGrad` | float32 | 2.384e-07 | 1.041e-07 | 30 | 0 |
 | `Sum` | float32 | 2.384e-07 | 1.047e-07 | 6 | 0 |
+| `Softplus` | float32 | 1.788e-07 | 6.499e-07 | 30 | 0 |
 | `BatchMatMul` | float32 | 1.565e-07 | 1.437e-06 | 24 | 0 |
 | `LRNGrad` | float32 | 1.490e-07 | 1.832e-06 | 378 | 0 |
 | `CumulativeLogsumexp` | float32 | 1.341e-07 | 8.001e-07 | 30 | 0 |
@@ -65,10 +66,9 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `IRFFT2D` | float32 | 1.192e-07 | 5.433e-07 | 64 | 0 |
 | `LRN` | float32 | 1.192e-07 | 1.726e-07 | 432 | 0 |
 | `ResizeBilinear` | float32 | 1.192e-07 | 7.935e-05 | 180 | 0 |
-| `Selu` | float32 | 1.192e-07 | 1.080e-07 | 30 | 0 |
+| `Selu` | float32 | 1.192e-07 | 2.364e-07 | 30 | 0 |
 | `Sigmoid` | float32 | 1.192e-07 | 2.200e-07 | 30 | 0 |
 | `SoftmaxCrossEntropyWithLogits` | float32 | 1.192e-07 | 1.029e-05 | 24 | 0 |
-| `Softplus` | float32 | 1.192e-07 | 5.687e-07 | 30 | 0 |
 | `SparseSegmentSqrtN` | float32 | 1.192e-07 | 9.633e-08 | 12 | 0 |
 | `SparseSegmentSqrtNWithNumSegments` | float32 | 1.192e-07 | 9.633e-08 | 12 | 0 |
 | `SparseSoftmaxCrossEntropyWithLogits` | float32 | 1.192e-07 | 1.487e-07 | 24 | 0 |
@@ -78,7 +78,7 @@ A few rows move slightly between runs on otherwise identical inputs. The gradien
 | `Atan2` | float32 | 5.960e-08 | 7.589e-08 | 30 | 0 |
 | `Cos` | float32 | 5.960e-08 | 7.981e-08 | 30 | 0 |
 | `CropAndResizeGradImage` | float32 | 5.960e-08 | 9.313e-08 | 378 | 99 |
-| `Elu` | float32 | 5.960e-08 | 1.437e-07 | 30 | 0 |
+| `Elu` | float32 | 5.960e-08 | 2.078e-07 | 30 | 0 |
 | `IFFT2D` | complex64 | 5.960e-08 | 3.819e-07 | 64 | 0 |
 | `Log1p` | float32 | 5.960e-08 | 4.610e-07 | 30 | 0 |
 | `Mean` | float32 | 5.960e-08 | 1.136e-07 | 6 | 0 |
