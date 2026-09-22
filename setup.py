@@ -95,13 +95,14 @@ class BinaryDistribution(Distribution):
 
 
 setup(
-    # Not "tensorflow-metal-plugin", and not anything else one hyphen away
-    # from Apple's abandoned `tensorflow-metal`: PyPI normalises names, the
-    # two would sit next to each other in any listing, and a user installing
-    # the wrong one gets a package whose last release predates three
-    # TensorFlow minors. This name says what it is instead of borrowing.
-    name="metal-pluggable-device",
-    version="0.4.0",
+    # The name this package was already published under on PyPI (0.1.0 to
+    # 0.2.0), so that `pip install -U` reaches the people who installed it.
+    # It sits one hyphen away from Apple's abandoned `tensorflow-metal`, which
+    # is why it was briefly renamed to `metal-pluggable-device`; that name was
+    # never published, and stranding existing users cost more than the
+    # confusion it avoided.
+    name="tensorflow-metal-plugin",
+    version="0.4.1",
     description=("Metal GPU backend for TensorFlow on Apple silicon, as an "
                  "out-of-tree PluggableDevice"),
     keywords=["tensorflow", "metal", "apple-silicon", "pluggabledevice",

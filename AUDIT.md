@@ -980,6 +980,10 @@ abandoned package", which it was. The import path is unchanged, since
 TensorFlow scans `site-packages/tensorflow-plugins` and that is still where
 the dylib lands. The wheel is 407 KB, down from the 497 KB the audit measured.
 
+That rename was reverted in 0.4.1. It rested on nothing having been published,
+which was wrong: `tensorflow-metal-plugin` 0.1.0 to 0.2.0 were already on PyPI,
+and a new name would have left those users on a release pinned to nothing.
+
 **CI compares arithmetic now**, at `3c4a6ef`. The audit listed the sweep among
 the existing tests and did not say that CI never ran it: the build, the symbol
 check, the shader compile and the on-device harness all pass against a kernel
