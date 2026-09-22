@@ -1,4 +1,4 @@
-# metal-pluggable-device
+# tensorflow-metal-plugin
 
 A Metal GPU backend for TensorFlow on Apple silicon, built as an out-of-tree
 PluggableDevice. It loads into a stock TensorFlow wheel and adds
@@ -71,7 +71,7 @@ instead of quietly producing a correct answer on the wrong device.
 
 ```
 pip install "tensorflow==2.21.*"
-pip install metal-pluggable-device
+pip install tensorflow-metal-plugin
 ```
 
 Requires macOS 15 or later on Apple silicon, and **TensorFlow 2.21**. One
@@ -345,9 +345,9 @@ wheel past cp312, has no sdist, and its repository was archived in 2021. TF
 master requires Python 3.10 or later and classifies up to cp313, so on a
 current Python there is no GPU path for TensorFlow on a Mac at all.
 
-| | metal-pluggable-device | tensorflow-metal |
+| | tensorflow-metal-plugin | tensorflow-metal |
 | --- | --- | --- |
-| Latest release | 0.4.0 | 1.2.0, 2025-01-31 |
+| Latest release | 0.4.1 | 1.2.0, 2025-01-31 |
 | TensorFlow releases shipped since | none yet | three: 2.19, 2.20, 2.21 |
 | Vendor | none, one maintainer and whoever joins | Apple, which has moved to MLX |
 | Source | in this repository, Apache-2.0 | closed, a binary wheel only |
